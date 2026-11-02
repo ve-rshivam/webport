@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f3eee3" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#141210" media="(prefers-color-scheme: dark)" />
+    <meta
+      name="description"
+      content="Portfolio of Shivam Kumar, a full-stack developer building high-performance web applications with React, Node.js, and AI."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Shivam Kumar — Full-Stack Developer" />
+    <meta
+      property="og:description"
+      content="Portfolio of Shivam Kumar, a full-stack developer building high-performance web applications with React, Node.js, and AI."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // Apply the saved theme before first paint to avoid a theme flash.
+      (function () {
+        try {
+          var stored = localStorage.getItem('theme');
+          var isDark = stored === 'dark'
+            || (stored !== 'light' && !window.matchMedia('(prefers-color-scheme: light)').matches);
+          document.documentElement.classList.add(isDark ? 'dark' : 'light');
+          document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+        } catch (error) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+    <title>Shivam Kumar — Full-Stack Developer</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
