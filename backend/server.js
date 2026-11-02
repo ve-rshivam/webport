@@ -104,7 +104,7 @@ const checkPerm = (validSections) => (req, res, next) => {
   return res.status(403).json({ success: false, message: `Access Denied. Requires one of: ${validSections.join(', ')}` });
 };
 
-mongoose.connect(process.env.MONGO_URI, { family: 4 })
+mongoose.connect(process.env.MONGO_URI, { family: 4, socketTimeoutMS: 45000, serverSelectionTimeoutMS: 45000 })
   .then(() => console.log('✅ Cloud MongoDB Connected Successfully'))
   .catch(err => console.log('❌ MongoDB Connection Error:', err));
 
