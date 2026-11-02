@@ -230,10 +230,15 @@ EMAIL_SUPPORT=contact@rshivam.dev
 | `EMAIL_FROM` | no | Defaults to `noreply@rshivam.dev`; must be on a verified domain |
 | `EMAIL_SUPPORT` | no | Defaults to `contact@rshivam.dev`; used for `Reply-To` and the support line |
 
-The existing routes still use the older per-surface variables
-(`RESEND_API_KEY_ADMIN`, `RESEND_API_KEY_TEAM`, `RESEND_SENDER_EMAIL`). Those keys
-must also belong to an account with `rshivam.dev` verified, otherwise they only
-deliver to the account owner's own address.
+`RESEND_API_KEY` is the main key and powers every email route by default,
+including the admin alerts and client mail that previously used dedicated keys.
+`RESEND_API_KEY_ADMIN` and `RESEND_API_KEY_TEAM` are optional overrides — leave
+them blank to reuse the main key. `RESEND_SENDER_EMAIL` is an optional sender
+override and falls back to `EMAIL_FROM`, then `noreply@rshivam.dev`.
+
+If a key belongs to an account without a verified `rshivam.dev` domain, Resend
+only delivers to that account owner's own address; verify the domain before
+sending to real clients.
 
 ---
 

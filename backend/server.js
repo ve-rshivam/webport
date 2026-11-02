@@ -109,19 +109,24 @@ mongoose.connect(process.env.MONGO_URI, { family: 4, socketTimeoutMS: 45000, ser
   .then(() => console.log('✅ Cloud MongoDB Connected Successfully'))
   .catch(err => console.log('❌ MongoDB Connection Error:', err));
 
-// 3 ALAG RESEND SETUP (Tumhari request ke according)
-// Resend email setup — only create instances when API keys are available
-// Server starts fine without keys; email endpoints return errors gracefully
+// Resend setup. RESEND_API_KEY is the main sending key for noreply@rshivam.dev
+// and powers every email route by default; the per-surface keys are optional
+// overrides. Instances stay null when no key is configured, and safeSend()
+// returns null so the API keeps working without email.
 let adminResend = null;
-
 let teamResend = null;
-// NOTE: client emails now route through the team key to avoid the client key's
-// testing-only recipient restriction. Keep RESEND_API_KEY_CLIENT unset unless a
-// verified domain is attached to it.
-if (process.env.RESEND_API_KEY_TEAM) teamResend = new Resend(process.env.RESEND_API_KEY_TEAM);
+
+const mainResendKey = process.env.RESEND_API_KEY;
+const adminResendKey = process.env.RESEND_API_KEY_ADMIN || mainResendKey;
+const teamResendKey = process.env.RESEND_API_KEY_TEAM || mainResendKey;
+
+if (adminResendKey) adminResend = new Resend(adminResendKey);
+if (teamResendKey) teamResend = new Resend(teamResendKey);
 
 // Sender email — use your verified Resend domain when ready
-const senderEmail = process.env.RESEND_SENDER_EMAIL || 'noreply@rshivam.dev';
+// Main sender: noreply@rshivam.dev on the verified rshivam.dev domain.
+const senderEmail =
+  process.env.RESEND_SENDER_EMAIL || process.env.EMAIL_FROM || 'noreply@rshivam.dev';
 
 // Helper: safely send email, returns null if Resend not configured
 async function safeSend(resendInstance, params) {

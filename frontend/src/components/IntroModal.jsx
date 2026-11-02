@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
 
 const SCREENS = [
@@ -34,88 +34,96 @@ const SCREENS = [
 const TYPE_SPEED = 28;
 const LINE_PAUSE = 600;
 const SCREEN_PAUSE = 2200;
+const START_DELAY = 500;
+const CLOSE_DELAY = 900;
+
+const countChars = (lines) => lines.reduce((sum, line) => sum + line.text.length, 0);
+const TOTAL_CHARS = SCREENS.reduce((sum, screen) => sum + countChars(screen.lines), 0);
 
 const IntroModal = () => {
   const [visible, setVisible] = useState(false);
+  const [started, setStarted] = useState(false);
   const [screenIndex, setScreenIndex] = useState(0);
   const [currentLine, setCurrentLine] = useState(0);
   const [currentChar, setCurrentChar] = useState(0);
-  const [done, setDone] = useState(false);
-  const timeoutRef = useRef(null);
+
+  const dismiss = useCallback(() => {
+    try {
+      localStorage.setItem('introSeen', 'true');
+    } catch {
+      // storage can be unavailable in private mode; dismissal still works
+    }
+    setVisible(false);
+  }, []);
 
   useEffect(() => {
-    const seen = localStorage.getItem('introSeen');
-    if (seen) return;
+    let seen = null;
+    try {
+      seen = localStorage.getItem('introSeen');
+    } catch {
+      seen = null;
+    }
+    if (seen) return undefined;
     const t = setTimeout(() => setVisible(true), 500);
     return () => clearTimeout(t);
   }, []);
 
-  const schedule = (ms, fn) => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = setTimeout(fn, ms);
-  };
+  useEffect(() => {
+    if (!visible || started) return undefined;
+    const t = setTimeout(() => setStarted(true), START_DELAY);
+    return () => clearTimeout(t);
+  }, [visible, started]);
 
-  const typeLine = (lineIdx) => {
+  // One timer per state: every char, line and screen transition re-runs this
+  // effect with fresh values, so the animation always advances and the progress
+  // counter reaches exactly 100% on the final character.
+  useEffect(() => {
+    if (!visible || !started) return undefined;
+
     const screen = SCREENS[screenIndex];
-    const line = screen.lines[lineIdx];
+    const line = screen?.lines[currentLine];
+
     if (!line) {
-      schedule(LINE_PAUSE, () => {
-        if (screenIndex < SCREENS.length - 1) {
-          schedule(SCREEN_PAUSE, advanceScreen);
-        } else {
-          setDone(true);
-        }
-      });
-      return;
+      if (screenIndex < SCREENS.length - 1) {
+        const t = setTimeout(() => {
+          setScreenIndex((i) => i + 1);
+          setCurrentLine(0);
+          setCurrentChar(0);
+        }, SCREEN_PAUSE);
+        return () => clearTimeout(t);
+      }
+
+      // Everything typed: progress is at 100%, close on its own.
+      const t = setTimeout(dismiss, CLOSE_DELAY);
+      return () => clearTimeout(t);
     }
 
     if (currentChar < line.text.length) {
-      setCurrentChar((prev) => prev + 1);
-      schedule(TYPE_SPEED, () => typeLine(lineIdx));
-    } else {
-      schedule(LINE_PAUSE, () => {
-        setCurrentLine((prev) => prev + 1);
-        setCurrentChar(0);
-        schedule(80, () => typeLine(lineIdx + 1));
-      });
+      const t = setTimeout(() => setCurrentChar((c) => c + 1), TYPE_SPEED);
+      return () => clearTimeout(t);
     }
-  };
 
-  const advanceScreen = () => {
-    setScreenIndex((prev) => prev + 1);
-    setCurrentLine(0);
-    setCurrentChar(0);
-    schedule(300, () => typeLine(0));
-  };
-
-  useEffect(() => {
-    if (!visible) return;
-    schedule(400, () => typeLine(0));
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, [visible]);
+    const t = setTimeout(() => {
+      setCurrentLine((l) => l + 1);
+      setCurrentChar(0);
+    }, LINE_PAUSE);
+    return () => clearTimeout(t);
+  }, [visible, started, screenIndex, currentLine, currentChar, dismiss]);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) return undefined;
     const handleKey = (e) => {
       if (e.key === 'Escape' || e.key === 'Enter') {
         e.preventDefault();
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        localStorage.setItem('introSeen', 'true');
-        setVisible(false);
+        dismiss();
       }
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [visible]);
+  }, [visible, dismiss]);
 
   const handleOverlayClick = (e) => {
-    if (e.target === e.currentTarget) {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      localStorage.setItem('introSeen', 'true');
-      setVisible(false);
-    }
+    if (e.target === e.currentTarget) dismiss();
   };
 
   const currentScreen = SCREENS[screenIndex];
@@ -123,11 +131,19 @@ const IntroModal = () => {
   const displayedText = currentLineData ? currentLineData.text.slice(0, currentChar) : '';
   const isCommand = currentLineData?.type === 'command';
 
-  const typedChars = currentScreen.lines
-    .slice(0, currentLine)
-    .reduce((a, l) => a + (l.type === 'command' ? 0 : l.text.length), 0) + currentChar;
-  const totalChars = currentScreen.lines.reduce((a, l) => a + l.text.length, 0);
-  const progress = totalChars > 0 ? Math.round((typedChars / totalChars) * 100) : 0;
+  const charsBeforeScreen = SCREENS.slice(0, screenIndex).reduce(
+    (sum, screen) => sum + countChars(screen.lines),
+    0
+  );
+  const charsBeforeLine = currentScreen
+    ? countChars(currentScreen.lines.slice(0, currentLine))
+    : 0;
+  const typedChars =
+    charsBeforeScreen +
+    charsBeforeLine +
+    Math.min(currentChar, currentLineData ? currentLineData.text.length : 0);
+  const progress =
+    TOTAL_CHARS > 0 ? Math.min(100, Math.round((typedChars / TOTAL_CHARS) * 100)) : 0;
 
   return (
     <AnimatePresence>
@@ -161,11 +177,12 @@ const IntroModal = () => {
                 </div>
               ))}
 
-              <div className={isCommand ? 'text-[var(--signal)]' : 'text-[var(--ink-soft)]'}>
-                {isCommand && currentScreen.prompt} {displayedText}
-                {!isCommand && displayedText}
-                <span className="inline-block h-4 w-2.5 bg-[var(--signal)] ml-1 animate-pulse" />
-              </div>
+              {currentLineData && (
+                <div className={isCommand ? 'text-[var(--signal)]' : 'text-[var(--ink-soft)]'}>
+                  {isCommand && currentScreen.prompt} {displayedText}
+                  <span className="inline-block h-4 w-2.5 bg-[var(--signal)] ml-1 animate-pulse" />
+                </div>
+              )}
 
               {currentScreen.lines.slice(currentLine + 1).map((line, i) => (
                 <div
@@ -182,22 +199,13 @@ const IntroModal = () => {
                   )}
                 </div>
               ))}
-
-              {done && (
-                <div className="mt-1">
-                  <span className="text-[var(--signal)]">{currentScreen.prompt}</span>
-                  <span className="inline-block h-4 w-2.5 bg-[var(--signal)] ml-1 animate-pulse" />
-                </div>
-              )}
             </div>
 
             {/* Status bar */}
             <div className="border-t border-[var(--rule)] bg-[#1a1a1a] px-4 py-1.5 flex items-center justify-between text-[10px] font-mono-ui text-[#666]">
               <span className="text-[#c9c9c9]">{String.fromCharCode(125)}</span>
               <span className="text-[#888]">
-                {done
-                  ? 'Press any key to explore'
-                  : 'Typing... ' + progress + '%'}
+                {progress >= 100 ? '100% — opening portfolio' : 'Typing... ' + progress + '%'}
               </span>
               <span className="text-[#c9c9c9]">00:00</span>
             </div>
