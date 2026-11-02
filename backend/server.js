@@ -112,11 +112,11 @@ mongoose.connect(process.env.MONGO_URI, { family: 4, socketTimeoutMS: 45000, ser
 // Resend email setup — only create instances when API keys are available
 // Server starts fine without keys; email endpoints return errors gracefully
 let adminResend = null;
-let clientResend = null;
-let teamResend = null;
 
-if (process.env.RESEND_API_KEY_ADMIN) adminResend = new Resend(process.env.RESEND_API_KEY_ADMIN);
-if (process.env.RESEND_API_KEY_CLIENT) clientResend = new Resend(process.env.RESEND_API_KEY_CLIENT);
+let teamResend = null;
+// NOTE: client emails now route through the team key to avoid the client key's
+// testing-only recipient restriction. Keep RESEND_API_KEY_CLIENT unset unless a
+// verified domain is attached to it.
 if (process.env.RESEND_API_KEY_TEAM) teamResend = new Resend(process.env.RESEND_API_KEY_TEAM);
 
 // Sender email — use your verified Resend domain when ready
@@ -597,7 +597,7 @@ app.post('/api/payment/gateway-success', async (req, res) => {
         await project.save();
 
         try {
-          await safeSend(clientResend, {
+          await safeSend(teamResend, {
             from: senderEmail,
             to: email,
             subject: "🎉 Remaining Balance Received",
@@ -648,7 +648,7 @@ app.post('/api/payment/gateway-success', async (req, res) => {
         await newProject.save();
 
         try {
-          await safeSend(clientResend, {
+          await safeSend(teamResend, {
             from: senderEmail,
             to: email,
             subject: "🎉 Payment Verified - Portal Login Details",
@@ -818,7 +818,7 @@ app.post('/api/client/forgot-password', authLimiter, async (req, res) => {
     );
 
     try {
-      await safeSend(clientResend, {
+      await safeSend(teamResend, {
         from: senderEmail,
         to: email,
         subject: "Your portal password reset code",
@@ -1250,7 +1250,7 @@ app.post('/api/client-projects/:id/message', verifyAdminToken, checkPerm(['proje
 
    
     try {
-      await safeSend(clientResend, {
+      await safeSend(teamResend, {
         from: senderEmail,
         to: project.clientEmail,
         subject: `📩 Important Message regarding ${project.projectTitle}`,
@@ -1298,7 +1298,7 @@ app.post('/api/admin/verify-client-payment/:id', verifyAdminToken, checkPerm(['p
     await project.save();
 
     try {
-      await safeSend(clientResend, {
+      await safeSend(teamResend, {
         from: senderEmail,
         to: project.clientEmail,
         subject: "🎉 Payment Verified - Your Project Access Key",
@@ -1331,7 +1331,7 @@ app.post('/api/admin/approve-payment-message/:msgId', verifyAdminToken, checkPer
             await Message.findByIdAndDelete(req.params.msgId);
             
             try {
-              await safeSend(clientResend, {
+              await safeSend(teamResend, {
                 from: senderEmail,
                 to: msg.email,
                 subject: "🎉 Remaining Balance Verified",
@@ -1369,7 +1369,7 @@ app.post('/api/admin/approve-payment-message/:msgId', verifyAdminToken, checkPer
     await newProject.save();
 
     try {
-      await safeSend(clientResend, {
+      await safeSend(teamResend, {
         from: senderEmail,
         to: msg.email,
         subject: "🎉 Payment Verified - Portal Login Details",
@@ -1394,7 +1394,7 @@ app.post('/api/admin/reject-payment-message/:msgId', verifyAdminToken, checkPerm
     const rejectReason = req.body.reason || "Invalid Transaction ID or Unclear Screenshot";
 
     try {
-      await safeSend(clientResend, {
+      await safeSend(teamResend, {
         from: senderEmail,
         to: msg.email,
         subject: "⚠️ Action Required: Payment Verification Failed",
