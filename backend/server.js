@@ -6,6 +6,7 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Resend } from 'resend';
+import { sendClientCredentialsEmail } from './src/services/emailService.js';
 import bcrypt from 'bcryptjs';
 import helmet from 'helmet';
 import mongoSanitize from 'express-mongo-sanitize';
@@ -1082,6 +1083,59 @@ app.delete('/api/admin/team/:id', verifyAdminToken, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
+
+// Admin-only: dispatch temporary portal credentials to a client.
+// The password travels in the request body only — it is never logged or stored here.
+app.post('/api/auth/send-credentials', authLimiter, verifyAdminToken, checkPerm(['team', 'projects']), async (req, res) => {
+  const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+  try {
+    const body = req.body || {};
+    const toEmail = typeof body.toEmail === 'string' ? body.toEmail.trim() : '';
+    const recipientName = typeof body.recipientName === 'string' ? body.recipientName.trim() : '';
+    const temporaryPassword = typeof body.temporaryPassword === 'string' ? body.temporaryPassword : '';
+    const rawLoginUrl = typeof body.loginUrl === 'string' ? body.loginUrl.trim() : '';
+
+    if (!EMAIL_PATTERN.test(toEmail)) {
+      return res.status(400).json({ success: false, message: "A valid recipient email (toEmail) is required." });
+    }
+    if (!recipientName) {
+      return res.status(400).json({ success: false, message: "recipientName is required." });
+    }
+    if (temporaryPassword.length < 8) {
+      return res.status(400).json({ success: false, message: "temporaryPassword must be at least 8 characters." });
+    }
+
+    let loginUrl;
+    if (rawLoginUrl) {
+      let parsed;
+      try {
+        parsed = new URL(rawLoginUrl);
+      } catch {
+        return res.status(400).json({ success: false, message: "loginUrl must be a valid http(s) URL." });
+      }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return res.status(400).json({ success: false, message: "loginUrl must be a valid http(s) URL." });
+      }
+      loginUrl = parsed.toString();
+    }
+
+    const { messageId } = await sendClientCredentialsEmail({
+      toEmail,
+      recipientName,
+      temporaryPassword,
+      loginUrl,
+    });
+
+    return res.json({ success: true, messageId });
+  } catch (err) {
+    if (err && err.code === 'not_configured') {
+      return res.status(503).json({ success: false, message: "Email service is not configured on the server." });
+    }
+    console.error('send-credentials failed:', err && err.message ? err.message : err);
+    return res.status(502).json({ success: false, message: "The credentials email could not be sent. Verify the Resend domain and sender, then try again." });
+  }
+});
 
 app.get('/api/messages', verifyAdminToken, checkPerm(['messages', 'payments']), async (req, res) => {
   try { res.json(await Message.find().sort({ date: -1 })); } 
