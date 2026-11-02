@@ -1,7 +1,98 @@
-import { useState, useEffect } from 'react';
+import { Fragment, useState, useEffect } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { apiGet } from '../lib/api';
+import { readCachedRoles, sanitizeRoles, writeCachedRoles } from '../lib/roleCache';
+
+const DEFAULT_ROLES = [
+  'Full-Stack Web Developer',
+  'AI & ML Enthusiast',
+  "Google Student Ambassador '26",
+  'Microsoft Learn Student Ambassador',
+  'DSA Problem Solver',
+  'Open Source Contributor',
+];
+
+const DEFAULT_HERO_SUBTITLE =
+  'I build high-performance, interactive web applications with modern frameworks, careful algorithms and scalable backends.';
+
+const ROLE_HOLD_MS = 2000;
+const ROLE_EXIT_MS = 280;
+
+const RoleRotator = ({ roles, reduceMotion }) => {
+  const [active, setActive] = useState(0);
+  const [visible, setVisible] = useState(false);
+  const [started, setStarted] = useState(false);
+  const count = roles.length;
+  const activeIndex = count > 0 ? active % count : 0;
+
+  // A short delay lets the hidden state paint before the first role transitions in.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setStarted(true);
+      setVisible(true);
+    }, 60);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!started || reduceMotion || count < 2 || !visible) return undefined;
+    const timer = setTimeout(() => setVisible(false), ROLE_HOLD_MS);
+    return () => clearTimeout(timer);
+  }, [started, visible, count, reduceMotion]);
+
+  useEffect(() => {
+    if (!started || reduceMotion || count < 2 || visible) return undefined;
+    const timer = setTimeout(() => {
+      setActive((current) => (current + 1) % count);
+      setVisible(true);
+    }, ROLE_EXIT_MS);
+    return () => clearTimeout(timer);
+  }, [started, visible, count, reduceMotion]);
+
+  if (count === 0) return null;
+  if (reduceMotion || count === 1) return <>{roles.join(' · ')}</>;
+
+  const renderRole = (role) => {
+    let charIndex = 0;
+    return role.split(' ').map((word, wordIndex) => {
+      const chars = [...word].map((char) => {
+        const index = charIndex++;
+        return (
+          <span
+            className="role-char"
+            style={{ '--i': String(index) }}
+            key={`${wordIndex}-${index}`}
+          >
+            {char}
+          </span>
+        );
+      });
+      return (
+        <Fragment key={wordIndex}>
+          {wordIndex > 0 ? ' ' : null}
+          <span className="role-word">{chars}</span>
+        </Fragment>
+      );
+    });
+  };
+
+  return (
+    <>
+      <span className="sr-only">{roles.join(' · ')}</span>
+      <span className="role-stack" aria-hidden="true">
+        {roles.map((role, index) => (
+          <span
+            key={index}
+            className={`role-stack-item ${visible && index === activeIndex ? 'is-on' : ''}`}
+          >
+            {renderRole(role)}
+          </span>
+        ))}
+      </span>
+    </>
+  );
+};
 
 const Home = () => {
   const reduceMotion = useReducedMotion();
@@ -9,17 +100,13 @@ const Home = () => {
   const [projects, setProjects] = useState([]);
   const [projectStatus, setProjectStatus] = useState('loading');
 
-  const [homeContent, setHomeContent] = useState({
-    heroSubtitle:
-      'I build high-performance, interactive web applications with modern frameworks, careful algorithms and scalable backends.',
-    roles: [
-      'Full-Stack Web Developer',
-      'AI & ML Enthusiast',
-      "Google Student Ambassador '26",
-      'Microsoft Learn Student Ambassador',
-      'DSA Problem Solver',
-      'Open Source Contributor',
-    ],
+  const [homeContent, setHomeContent] = useState(() => {
+    const cachedRoles = readCachedRoles();
+    return {
+      heroSubtitle: DEFAULT_HERO_SUBTITLE,
+      roles: cachedRoles,
+      rolesLoaded: cachedRoles.length > 0,
+    };
   });
 
   const [aboutContent, setAboutContent] = useState({
@@ -47,26 +134,33 @@ const Home = () => {
   useEffect(() => {
     apiGet('/api/content')
       .then((data) => {
-        if (!data) return;
-
-        const roles = Array.isArray(data.homeData?.roles)
-          ? data.homeData.roles.map((role) => String(role).trim()).filter(Boolean)
-          : [];
+        const hasRoles = Array.isArray(data?.homeData?.roles);
+        const roles = sanitizeRoles(data?.homeData?.roles);
 
         setHomeContent((prev) => ({
           ...prev,
           heroSubtitle:
-            typeof data.homeData?.heroSubtitle === 'string' && data.homeData.heroSubtitle.trim()
+            typeof data?.homeData?.heroSubtitle === 'string' && data.homeData.heroSubtitle.trim()
               ? data.homeData.heroSubtitle
               : prev.heroSubtitle,
-          roles: roles.length > 0 ? roles : prev.roles,
+          roles: hasRoles ? roles : prev.roles,
+          rolesLoaded: true,
         }));
 
-        if (data.aboutData?.description) {
+        if (hasRoles) writeCachedRoles(roles);
+
+        if (data?.aboutData?.description) {
           setAboutContent({ description: data.aboutData.description });
         }
       })
-      .catch((err) => console.log('Content fetch error', err));
+      .catch((err) => {
+        console.log('Content fetch error', err);
+        setHomeContent((prev) => ({
+          ...prev,
+          roles: prev.roles.length > 0 ? prev.roles : DEFAULT_ROLES,
+          rolesLoaded: true,
+        }));
+      });
 
     apiGet('/api/pinned-projects')
       .then((data) => {
@@ -120,10 +214,17 @@ const Home = () => {
               {'Kumar'}<span className="text-[var(--signal)]">.</span>
             </h1>
 
-            <p className="mt-8 max-w-xl text-lg leading-relaxed text-[var(--ink-soft)] md:text-xl">
-              {homeContent.roles.length > 0
-                ? homeContent.roles.join(' · ')
-                : homeContent.heroSubtitle}
+            <p className="mt-8 min-h-[3.5rem] max-w-xl text-lg leading-relaxed text-[var(--ink-soft)] md:text-xl">
+              {!homeContent.rolesLoaded ? (
+                <span
+                  aria-hidden="true"
+                  className="mt-2 block h-5 w-2/3 max-w-sm animate-pulse rounded-sm bg-[var(--rule)]"
+                />
+              ) : homeContent.roles.length > 0 ? (
+                <RoleRotator roles={homeContent.roles} reduceMotion={reduceMotion} />
+              ) : (
+                homeContent.heroSubtitle
+              )}
             </p>
 
             <div className="mt-10 flex flex-wrap items-center gap-x-8 gap-y-4">
@@ -191,12 +292,18 @@ const Home = () => {
         <div className="mt-12 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-[var(--rule)] pt-4">
           <span className="eyebrow text-[var(--signal)]">Currently</span>
           <ul className="flex flex-wrap items-center gap-x-5 gap-y-2 font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
-            {homeContent.roles.map((role, index) => (
-              <li key={`${role}-${index}`} className="flex items-center gap-5">
-                {index > 0 && <span aria-hidden="true" className="h-3 w-px bg-[var(--rule)]" />}
-                {role}
+            {!homeContent.rolesLoaded ? (
+              <li aria-hidden="true" className="flex items-center gap-5">
+                <span className="inline-block h-2.5 w-40 animate-pulse bg-[var(--rule)]" />
               </li>
-            ))}
+            ) : (
+              homeContent.roles.map((role, index) => (
+                <li key={`${role}-${index}`} className="flex items-center gap-5">
+                  {index > 0 && <span aria-hidden="true" className="h-3 w-px bg-[var(--rule)]" />}
+                  {role}
+                </li>
+              ))
+            )}
           </ul>
         </div>
       </section>

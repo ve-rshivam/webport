@@ -1,5 +1,33 @@
 @import "tailwindcss";
 
+/* Home hero — roles share one grid cell, so the line never jumps height */
+.role-stack {
+  display: inline-grid;
+  vertical-align: top;
+}
+
+.role-stack-item {
+  grid-area: 1 / 1;
+  pointer-events: none;
+}
+
+.role-word {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.role-char {
+  display: inline-block;
+  opacity: 0;
+  transition: opacity 120ms linear;
+}
+
+.role-stack-item.is-on .role-char {
+  opacity: 1;
+  transition: opacity 120ms linear;
+  transition-delay: calc(var(--i) * 18ms);
+}
+
 /* Tailwind v4: `dark:` follows the .dark class on <html>, not the OS. */
 @custom-variant dark (&:where(.dark, .dark *));
 

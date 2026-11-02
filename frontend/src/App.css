@@ -234,3 +234,47 @@ html {
     transform: translateY(0) scale(1);
   }
 }
+
+/* Home hero — one role stretches down into place, stretches up away, repeat */
+@keyframes stretch-down {
+  0% {
+    opacity: 0;
+    transform: scaleY(0.12);
+  }
+  55% {
+    opacity: 1;
+    transform: scaleY(1.06);
+  }
+  75% {
+    transform: scaleY(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
+@keyframes stretch-up {
+  0% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scaleY(0.12);
+  }
+}
+
+.role-stretch {
+  display: inline-block;
+  transform-origin: top center;
+  will-change: transform, opacity;
+}
+
+.role-stretch.is-in {
+  animation: stretch-down 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.role-stretch.is-out {
+  animation: stretch-up 400ms cubic-bezier(0.55, 0, 0.55, 0.2) both;
+}

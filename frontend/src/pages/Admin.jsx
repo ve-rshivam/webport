@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { PageShell, buttonClass } from '../components/Editorial';
+import { writeCachedRoles } from '../lib/roleCache';
 
 const Admin = () => {
 
@@ -165,7 +166,10 @@ const Admin = () => {
         body: JSON.stringify({ homeData, aboutData, contactData, policyData })
       });
       const data = await res.json();
-      if (data.success) setCmsStatus("Changes are now live on the website.");
+      if (data.success) {
+        writeCachedRoles(homeData.roles);
+        setCmsStatus("Changes are now live on the website.");
+      }
     } catch (err) { setCmsStatus("Error connecting to database."); }
   };
 
@@ -902,11 +906,10 @@ const Admin = () => {
   }
 
   return (
-    <div className="flex min-h-screen bg-[var(--bg-main)]">
+    <div className="flex min-h-screen flex-col bg-[var(--bg-main)] md:flex-row">
       <style>{`
         @media (max-width: 768px) {
           .admin-sidebar { display: none; }
-          .admin-main { padding-left: 0; }
           .admin-mobile-header { display: flex; }
         }
         @media (min-width: 769px) {
@@ -993,7 +996,7 @@ const Admin = () => {
         </button>
       </div>
 
-      <div className="admin-main flex-1 p-8 md:p-10 overflow-y-auto border-b border-[var(--rule)] bg-[var(--bg-main)]">
+      <div className="admin-main flex-1 p-5 md:p-10 overflow-y-auto border-b border-[var(--rule)] bg-[var(--bg-main)]">
 
         {activeTab === 'dashboard' && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
@@ -1377,7 +1380,7 @@ const Admin = () => {
                 <label className="block m-0 mb-2 text-[var(--text-dim)] text-sm font-bold mt-4">Hero Subtitle (used only when no roles are set)</label>
                 <input type="text" value={homeData?.heroSubtitle || ''} onChange={e => setHomeData({...homeData, heroSubtitle: e.target.value})} className={inputClass} />
                 <label className="block m-0 mb-2 text-[var(--text-dim)] text-sm font-bold mt-4">Roles / Titles</label>
-                <p className="m-0 mb-3 text-xs text-[var(--text-dim)]">These appear on the home page under “Currently” and “Disciplines”. Add, edit or remove any role.</p>
+                <p className="m-0 mb-3 text-xs text-[var(--text-dim)]">These rotate through the home hero and appear under “Currently” and “Disciplines”. Add, edit or remove any role.</p>
                 {(homeData.roles || []).map((role, idx) => (
                   <div key={idx} className="flex gap-2 mb-2">
                     <input
@@ -1389,12 +1392,13 @@ const Admin = () => {
                         setHomeData({ ...homeData, roles: nextRoles });
                       }}
                       placeholder="e.g. Full-Stack Web Developer"
-                      className={inputClass}
+                      className={`${inputClass} flex-1 min-w-0`}
                     />
                     <button
                       type="button"
                       onClick={() => setHomeData({ ...homeData, roles: (homeData.roles || []).filter((_, i) => i !== idx) })}
-                      className="px-2 py-1 text-xs bg-transparent text-[#ff4d4d] border border-[#ff4d4d] rounded hover:bg-[#ff4d4d]/10 transition-colors"
+                      aria-label={`Delete role ${role || idx + 1}`}
+                      className="shrink-0 flex h-[42px] w-[42px] items-center justify-center text-sm bg-transparent text-[#ff4d4d] border border-[#ff4d4d] rounded hover:bg-[#ff4d4d]/10 transition-colors"
                     >
                       X
                     </button>
@@ -1403,7 +1407,7 @@ const Admin = () => {
                 <button
                   type="button"
                   onClick={() => setHomeData({ ...homeData, roles: [...(homeData.roles || []), ''] })}
-                  className="text-left text-sm text-[var(--accent)] border border-[var(--accent)] rounded px-4 py-2 hover:bg-[var(--accent)]/10 transition-colors"
+                  className="w-full sm:w-auto text-left text-sm text-[var(--accent)] border border-[var(--accent)] rounded px-4 py-2.5 hover:bg-[var(--accent)]/10 transition-colors"
                 >
                   + Add role
                 </button>
