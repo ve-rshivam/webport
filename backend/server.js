@@ -120,7 +120,7 @@ if (process.env.RESEND_API_KEY_CLIENT) clientResend = new Resend(process.env.RES
 if (process.env.RESEND_API_KEY_TEAM) teamResend = new Resend(process.env.RESEND_API_KEY_TEAM);
 
 // Sender email — use your verified Resend domain when ready
-const senderEmail = process.env.RESEND_SENDER_EMAIL || 'onboarding@resend.dev';
+const senderEmail = process.env.RESEND_SENDER_EMAIL || 'noreply@rshivam.dev';
 
 // Helper: safely send email, returns null if Resend not configured
 async function safeSend(resendInstance, params) {
