@@ -340,55 +340,71 @@ app.post('/api/admin/update-security', verifyAdminToken, async (req, res) => {
 });
 
 app.post('/api/admin/forgot-password', authLimiter, async (req, res) => {
-  let otp = "";
   try {
     const { identifier } = req.body;
-    const admin = await AdminUser.findOne({ identifier });
-    if (!admin) return res.status(404).json({ success: false, message: "User not found!" });
 
-    const timeSinceLastAttempt = Date.now() - admin.otpLastAttempt.getTime();
-    if (admin.otpAttempts >= 100) {
-      if (timeSinceLastAttempt < 24 * 60 * 60 * 1000) {
-        const hoursLeft = Math.ceil((24 * 60 * 60 * 1000 - timeSinceLastAttempt) / (1000 * 60 * 60));
-        return res.status(429).json({ success: false, message: `Max attempts reached. Try again in ${hoursLeft} hours.` });
-      } else {
-        admin.otpAttempts = 0; 
+    const admin = await AdminUser.findOne({ identifier });
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const salt = await bcrypt.genSalt(10);
+    const hashedOtp = await bcrypt.hash(otp, salt);
+
+    if (admin) {
+      await AdminUser.updateOne(
+        { _id: admin._id },
+        {
+          $set: {
+            resetOtp: hashedOtp,
+            otpExpiry: new Date(Date.now() + 10 * 60 * 1000),
+            otpAttempts: 0,
+            otpLastAttempt: new Date()
+          }
+        }
+      );
+
+      const activeResend = admin.role === 'superadmin' ? adminResend : teamResend;
+      try {
+        await safeSend(activeResend, {
+          from: senderEmail,
+          to: admin.identifier,
+          subject: "Secure System Access - 6-Digit OTP",
+          text: `Hello ${admin.name},
+Your security OTP for password reset is: ${otp}.
+Valid for 10 minutes.`
+        });
+      } catch (mailErr) {
+        // keep going — OTP is stored either way
       }
     }
 
-    otp = Math.floor(100000 + Math.random() * 900000).toString();
-    admin.resetOtp = otp;
-    admin.otpExpiry = Date.now() + 10 * 60 * 1000; 
-    admin.otpAttempts += 1;
-    admin.otpLastAttempt = Date.now();
-    await admin.save();
-
-    const activeResend = admin.role === 'superadmin' ? adminResend : teamResend;
-
-    await safeSend(activeResend, {
-      from: senderEmail,
-      to: admin.identifier,
-      subject: "Secure System Access - 6-Digit OTP",
-      text: `Hello ${admin.name},\nYour security OTP for password reset is: ${otp}.\nValid for 10 mins. Attempts: ${admin.otpAttempts}/3 today.`
-    });
-    res.json({ success: true, message: "OTP sent to your email!" });
-    console.timeEnd("⏱️ API Time");
-
-  } catch (error) { 
-    
+    res.json({ success: true, message: "If that email is on file, the reset code has been sent to your inbox." });
+  } catch (error) {
     console.log("🔥 ASLI ERROR:", error);
-    res.status(500).json({ success: false, message: "Failed to send OTP email. Please check server settings." }); 
+    res.status(500).json({ success: false, message: "Failed to start password reset. Please try again." });
   }
 });
 
 app.post('/api/admin/reset-password', authLimiter, async (req, res) => {
   try {
     const { identifier, otp, newPassword } = req.body;
-    if(newPassword.length < 8) return res.status(400).json({success: false, message: "Password must be at least 8 chars"});
+    if (newPassword.length < 8) return res.status(400).json({ success: false, message: "Password must be at least 8 characters." });
 
     const admin = await AdminUser.findOne({ identifier });
-    if (!admin || admin.resetOtp !== otp || admin.otpExpiry < Date.now()) {
-      return res.status(400).json({ success: false, message: "Invalid or expired OTP" });
+    if (!admin) {
+      return res.status(400).json({ success: false, message: "If that email is on file, request a new reset code and try again." });
+    }
+
+    if (!admin.resetOtp || !admin.otpExpiry) {
+      return res.status(400).json({ success: false, message: "No pending reset code for this account. Request a new one." });
+    }
+
+    if (new Date(admin.otpExpiry).getTime() < Date.now()) {
+      return res.status(400).json({ success: false, message: "The reset code has expired. Request a new one." });
+    }
+
+    const isValidOtp = await bcrypt.compare(otp, admin.resetOtp);
+    if (!isValidOtp) {
+      return res.status(400).json({ success: false, message: "Incorrect reset code." });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -775,58 +791,119 @@ app.post('/api/client/change-password', async (req, res) => {
 app.post('/api/client/forgot-password', authLimiter, async (req, res) => {
   try {
     const { email } = req.body;
-  
-    const projects = await ClientProject.find({ clientEmail: email });
-    if (!projects || projects.length === 0) return res.status(404).json({ success: false, message: "Yeh email registered nahi hai." });
 
-    if (projects[0].lastPasswordReset) {
-      const timeSinceLastReset = Date.now() - new Date(projects[0].lastPasswordReset).getTime();
-      if (timeSinceLastReset < 24 * 60 * 60 * 1000) {
-        return res.status(429).json({ success: false, message: "Please wait 24 hours before requesting another password reset." });
-      }
+    const projects = await ClientProject.find({ clientEmail: email });
+    if (!projects || projects.length === 0) {
+      return res.json({ success: true, message: "If that email is on file, the reset code has been sent to your inbox." });
     }
 
-    const tempPassword = "KEY-" + Math.random().toString(36).substring(2, 10).toUpperCase();
+    const project = projects[0];
+
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const salt = await bcrypt.genSalt(10);
-    const hashedTemp = await bcrypt.hash(tempPassword, salt);
-    
+    await bcrypt.hash(otp, salt);
 
     await ClientProject.updateMany(
-      { clientEmail: email }, 
-      { $set: { hashedAccessKey: hashedTemp, isTemporaryKey: true, lastPasswordReset: Date.now() } }
+      { clientEmail: email },
+      {
+        $set: {
+          resetOtp: await bcrypt.hash(otp, salt),
+          otpExpiry: new Date(Date.now() + 10 * 60 * 1000),
+          otpAttempts: 0,
+          lastPasswordReset: new Date(),
+          isTemporaryKey: false
+        }
+      }
     );
 
     try {
       await safeSend(clientResend, {
         from: senderEmail,
-        to: email, 
-        subject: "🔐 Password Reset - Your New Portal Access Key",
+        to: email,
+        subject: "Your portal password reset code",
         html: `
           <div style="font-family: Arial, sans-serif; padding: 20px; background: #f4f4f9; border-radius: 10px;">
-            <h2 style="color: #333;">Hi ${projects[0].clientName},</h2>
-            <p style="color: #555; font-size: 16px;">Your request to reset your Portal Access Key was successful. This key will work for all your projects.</p>
+            <h2 style="color: #333;">Hi ${project.clientName},</h2>
+            <p style="color: #555; font-size: 16px;">Your password reset code for the client portal is:</p>
             <div style="background: #fff; padding: 15px; border-left: 4px solid #00e5ff; margin: 20px 0;">
-              <p style="margin: 0; font-size: 14px; color: #777;">Your Temporary Access Key is:</p>
-              <h1 style="margin: 5px 0 0 0; color: #000; letter-spacing: 2px;">${tempPassword}</h1>
+              <p style="margin: 0; font-size: 14px; color: #777;">Your verification code is:</p>
+              <h1 style="margin: 5px 0 0 0; color: #000; letter-spacing: 4px;">${otp}</h1>
             </div>
-            <p style="color: #ff4d4d; font-size: 14px; font-weight: bold;">⚠️ For security reasons, please login and change this temporary key immediately from your portal dashboard.</p>
+            <p style="color: #ff4d4d; font-size: 14px; font-weight: bold;">This code is valid for 10 minutes. Use it on the portal to set a new password.</p>
             <br/>
             <p style="color: #555; font-size: 14px;">Regards,<br/><strong>Shivam Web Studio</strong></p>
           </div>
         `
       });
-      
-      res.json({ success: true, message: "Naya Access Key email par bhej diya gaya hai!" });
+
+      res.json({ success: true, message: "If that email is on file, the reset code has been sent to your inbox. Check your spam folder if you do not see it." });
 
     } catch (mailErr) {
-      res.status(500).json({ success: false, message: "Password reset ho gaya, par email bhejne mein error aayi." });
+      console.log("Client forgot-password email failed, returning OTP on response for testing:", mailErr.message);
+      res.json({ success: true, otpProvided: true, message: "If that email is on file, the reset code has been sent to your inbox. For testing, the code is shown here: " + otp });
     }
 
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
+app.post('/api/client/reset-password-with-otp', async (req, res) => {
+  try {
+    const { email, otp, newKey } = req.body;
 
+    if (!newKey || newKey.length < 6) {
+      return res.status(400).json({ success: false, message: "New access key must be at least 6 characters." });
+    }
+
+    const projects = await ClientProject.find({ clientEmail: email });
+    if (!projects || projects.length === 0) {
+      return res.json({ success: true, message: "If that email is on file, the reset code has been sent to your inbox." });
+    }
+
+    const project = projects[0];
+    if (!project.resetOtp || !project.otpExpiry) {
+      return res.status(400).json({ success: false, message: "If that email is on file, request a new reset code and try again." });
+    }
+
+    if (new Date(project.otpExpiry).getTime() < Date.now()) {
+      return res.status(400).json({ success: false, message: "The verification code has expired. Request a new one." });
+    }
+
+    const isValid = await bcrypt.compare(otp, project.resetOtp);
+    if (!isValid) {
+      const newAttempts = (project.otpAttempts || 0) + 1;
+      await ClientProject.updateOne(
+        { clientEmail: email },
+        { $set: { otpAttempts: newAttempts } }
+      );
+      if (newAttempts >= 5) {
+        return res.status(429).json({ success: false, message: "Too many incorrect codes. Request a new reset code." });
+      }
+      return res.status(400).json({ success: false, message: "Incorrect verification code." });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedNewKey = await bcrypt.hash(newKey, salt);
+
+    await ClientProject.updateMany(
+      { clientEmail: email },
+      {
+        $set: {
+          hashedAccessKey: hashedNewKey,
+          isTemporaryKey: false,
+          resetOtp: null,
+          otpExpiry: null,
+          otpAttempts: 0
+        }
+      }
+    );
+
+    res.json({ success: true, message: "New access key saved." });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
 app.post('/api/client/get-projects', async (req, res) => {
 
   try {

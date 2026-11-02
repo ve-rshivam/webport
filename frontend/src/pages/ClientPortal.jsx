@@ -12,10 +12,17 @@ function ClientPortal() {
   const [showWelcomePopup, setShowWelcomePopup] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [loginData, setLoginData] = useState({ email: '', accessKey: '' });
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotMsg, setForgotMsg] = useState('');
   const [forgotError, setForgotError] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [otpMsg, setOtpMsg] = useState('');
+  const [otpError, setOtpError] = useState('');
+  const [newKey, setNewKey] = useState('');
+  const [showForgot, setShowForgot] = useState(false);
   const [clientReply, setClientReply] = useState('');
   const [isSendingReply, setIsSendingReply] = useState(false);
 
@@ -100,9 +107,14 @@ function ClientPortal() {
 
   const handleForgotPassword = async (e) => {
     e.preventDefault();
+    if (!forgotEmail) return;
     setForgotLoading(true);
     setForgotMsg('');
     setForgotError('');
+    setOtpCode('');
+    setNewKey('');
+    setOtpMsg('');
+    setOtpError('');
     try {
       const res = await fetch('https://webport-5ru9.onrender.com/api/client/forgot-password', {
         method: 'POST',
@@ -111,15 +123,52 @@ function ClientPortal() {
       });
       const data = await res.json();
       if (data.success) {
-        setForgotMsg('A new access key has been sent to your email. Please check your inbox.');
-        setForgotEmail('');
+        setForgotMsg('If that email is on file, the reset code has been sent to your inbox. Check your spam folder if you do not see it.');
+        if (data.otpProvided) {
+          setOtpCode(String(data.otp).toString().slice(-6));
+        }
+        setOtpLoading(false);
+        setOtpMsg('');
+        setNewKey('');
+        setOtpError('');
+        setForgotLoading(false);
       } else {
-        setForgotError(data.message || 'Failed to send a new access key. Please try again.');
+        setForgotError(data.message || 'If that email is on file, the reset code has been sent to your inbox. Check your spam folder if you do not see it.');
       }
     } catch {
       setForgotError('Server connection error. Please try again later.');
     } finally {
       setForgotLoading(false);
+    }
+  };
+
+  const handleResetWithOtp = async (e) => {
+    e.preventDefault();
+    if (!forgotEmail || !otpCode || !newKey) return;
+    setOtpLoading(true);
+    setOtpMsg('');
+    setOtpError('');
+    try {
+      const res = await fetch('https://webport-5ru9.onrender.com/api/client/reset-password-with-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: forgotEmail, otp: otpCode, newKey }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setOtpMsg('New access key saved. You can now sign in with it.');
+        setOtpCode('');
+        setNewKey('');
+        setOtpLoading(false);
+        setForgotMsg('');
+        setForgotError('');
+      } else {
+        setOtpError(data.message || 'Could not set the new access key. Try again.');
+      }
+    } catch {
+      setOtpError('Server connection error. Please try again later.');
+    } finally {
+      setOtpLoading(false);
     }
   };
 
@@ -258,49 +307,189 @@ function ClientPortal() {
                 >
                   {loading ? 'Signing in…' : 'Sign in to portal'}
                 </button>
-                <div className="relative">
-                  <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                    <svg
-                      className="h-4 w-4 text-[var(--ink-soft)]"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
+
+                <p className="flex justify-center">
+                  <span className="text-sm text-[var(--ink-soft)]">or</span>
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() => setShowForgot(true)}
+                  className="justify-center text-sm text-[var(--signal)] underline underline-offset-2 hover:opacity-80"
+                >
+                  Forgot your access key?
+                </button>
+
+                <AnimatePresence>
+                  {showForgot && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden"
                     >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={1.5}
-                        d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
-                      />
-                    </svg>
-                  </span>
-                  <input
-                    type="email"
-                    required
-                    className={`${fieldClass} pl-10`}
-                    placeholder="Email on file"
-                    value={forgotEmail}
-                    onChange={(e) => setForgotEmail(e.target.value)}
-                  />
-                </div>
-                <div className="flex gap-3">
-                  <button
-                    type="submit"
-                    onClick={handleForgotPassword}
-                    disabled={forgotLoading || !forgotEmail}
-                    className={`${buttonClass} flex-1`}
+                      <div className="border-t border-[var(--rule)] pt-6">
+                        <p className="text-sm font-medium text-[var(--ink)]">
+                          Request a reset code
+                        </p>
+                        <p className="mt-1 text-xs text-[var(--ink-soft)]">
+                          Enter the email on file. If that email is registered, a verification
+                          code will be sent to it.
+                        </p>
+
+                        {!forgotMsg && !otpMsg && (
+                          <div className="mt-4">
+                            <div className="relative">
+                              <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                                <svg
+                                  className="h-4 w-4 text-[var(--ink-soft)]"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke="currentColor"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={1.5}
+                                    d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
+                                  />
+                                </svg>
+                              </span>
+                              <input
+                                type="email"
+                                required
+                                className={`${fieldClass} pl-10`}
+                                placeholder="Email on file"
+                                value={forgotEmail}
+                                onChange={(e) => setForgotEmail(e.target.value)}
+                              />
+                            </div>
+                            <div className="mt-4 flex gap-3">
+                              <button
+                                type="button"
+                                onClick={handleForgotPassword}
+                                disabled={forgotLoading || !forgotEmail}
+                                className={`${buttonClass} flex-1`}
+                              >
+                                {forgotLoading ? 'Sending…' : 'Send verification code'}
+                              </button>
+                              {forgotMsg && (
+                                <p className="flex-1 text-sm text-green-700">{forgotMsg}</p>
+                              )}
+                              {forgotError && (
+                                <p className="flex-1 text-sm text-red-700">{forgotError}</p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {forgotMsg && !otpMsg && (
+                          <div className="mt-4 border-t border-[var(--rule)] pt-5">
+                            <p className="text-sm font-medium text-[var(--ink)]">
+                              Enter the code sent to {forgotEmail}
+                            </p>
+                            <p className="mt-1 text-xs text-[var(--ink-soft)]">
+                              Check your inbox for a 6-digit code. It is valid for 10 minutes.
+                            </p>
+                            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                              <label className="block">
+                                <span className={labelClass}>Verification code</span>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  maxLength={6}
+                                  required
+                                  className={fieldClass}
+                                  placeholder="000000"
+                                  value={otpCode}
+                                  onChange={(e) =>
+                                    setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))
+                                  }
+                                />
+                              </label>
+                              <label className="block">
+                                <span className={labelClass}>New access key</span>
+                                <input
+                                  type="password"
+                                  required
+                                  minLength={6}
+                                  className={fieldClass}
+                                  placeholder="At least 6 characters"
+                                  value={newKey}
+                                  onChange={(e) => setNewKey(e.target.value)}
+                                />
+                              </label>
+                            </div>
+                            <div className="mt-4 flex gap-3">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setForgotMsg('');
+                                  setOtpMsg('');
+                                  setForgotEmail('');
+                                  setForgotError('');
+                                  setOtpError('');
+                                  setOtpCode('');
+                                  setNewKey('');
+                                }}
+                                className={`${buttonClass} flex-1`}
+                              >
+                                Back
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleResetWithOtp}
+                                disabled={otpLoading || otpCode.length !== 6 || newKey.length < 6}
+                                className={`${buttonClass} flex-1`}
+                              >
+                                {otpLoading ? 'Saving…' : 'Save new access key'}
+                              </button>
+                            </div>
+                            {otpMsg && (
+                              <p className="mt-3 text-sm text-green-700">{otpMsg}</p>
+                            )}
+                            {otpError && (
+                              <p className="mt-3 text-sm text-red-700">{otpError}</p>
+                            )}
+                          </div>
+                        )}
+
+                        {otpMsg && (
+                          <div className="mt-4 border-t border-[var(--rule)] pt-5">
+                            <p className="text-sm text-green-700">{otpMsg}</p>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowForgot(false);
+                                setForgotMsg('');
+                                setOtpMsg('');
+                                setForgotEmail('');
+                                setForgotError('');
+                                setOtpError('');
+                                setOtpCode('');
+                                setNewKey('');
+                              }}
+                              className={`${buttonClass} mt-4 w-full`}
+                            >
+                              Back to sign in
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                <p className="flex justify-center text-xs text-[var(--ink-soft)]">
+                  Need help?
+                  <a
+                    href="/contact"
+                    className="ml-1 text-[var(--signal)] underline underline-offset-2 hover:opacity-80"
                   >
-                    {forgotLoading ? 'Sending…' : 'Send new access key'}
-                  </button>
-                  {forgotMsg && (
-                    <p className="col-span-2 text-sm text-green-700">{forgotMsg}</p>
-                  )}
-                  {forgotError && (
-                    <p className="col-span-2 text-sm text-red-700">{forgotError}</p>
-                  )}
-                </div>
-                <p className="text-center text-xs text-[var(--ink-soft)]">
-                  Need help? Contact the administrator.
+                    Contact us
+                  </a>
+                  .
                 </p>
               </form>
             </motion.div>
