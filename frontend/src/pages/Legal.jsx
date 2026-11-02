@@ -9,7 +9,7 @@ const Legal = () => {
 
   
   useEffect(() => {
-    fetch("https://portfolio-px1j.onrender.com/api/content")
+    fetch("https://webport-5ru9.onrender.com/api/content")
       .then(res => res.json())
       .then(data => {
         if (data && data.policyData) {

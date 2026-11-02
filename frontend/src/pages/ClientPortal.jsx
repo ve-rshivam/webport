@@ -42,7 +42,7 @@ const ClientPortal = () => {
       const savedEmail = localStorage.getItem('clientEmail');
       if (!isLoggedIn || !savedEmail) return;
       try {
-        const res = await fetch('https://portfolio-px1j.onrender.com/api/client/get-projects', {
+        const res = await fetch('https://webport-5ru9.onrender.com/api/client/get-projects', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: savedEmail }),
@@ -69,7 +69,7 @@ const ClientPortal = () => {
     setError('');
 
     try {
-      const res = await fetch('https://portfolio-px1j.onrender.com/api/client/login', {
+      const res = await fetch('https://webport-5ru9.onrender.com/api/client/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(loginData),
@@ -121,7 +121,7 @@ const ClientPortal = () => {
     setForgotMsg('');
     setForgotError('');
     try {
-      const res = await fetch('https://portfolio-px1j.onrender.com/api/client/forgot-password', {
+      const res = await fetch('https://webport-5ru9.onrender.com/api/client/forgot-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: forgotEmail }),
@@ -148,7 +148,7 @@ const ClientPortal = () => {
 
     setIsSendingReply(true);
     try {
-      const res = await fetch('https://portfolio-px1j.onrender.com/api/client/send-message', {
+      const res = await fetch('https://webport-5ru9.onrender.com/api/client/send-message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -314,7 +314,7 @@ const ClientPortal = () => {
                   const newK = e.target.newKey.value;
                   try {
                     const res = await fetch(
-                      'https://portfolio-px1j.onrender.com/api/client/change-password',
+                      'https://webport-5ru9.onrender.com/api/client/change-password',
                       {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },

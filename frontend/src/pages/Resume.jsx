@@ -14,7 +14,7 @@ const Resume = () => {
 
   useEffect(() => {
     // 1. Fetch Pinned Projects (same as Home page — NOT all GitHub repos)
-    fetch(`https://portfolio-px1j.onrender.com/api/pinned-projects`)
+    fetch(`https://webport-5ru9.onrender.com/api/pinned-projects`)
       .then(res => res.json())
       .then(data => {
         if (Array.isArray(data)) setPinnedProjects(data);
@@ -22,7 +22,7 @@ const Resume = () => {
       .catch(err => console.error("Pinned Projects Fetch Error:", err));
 
     // 2. Fetch Skills, Experience, Education from backend
-    fetch("https://portfolio-px1j.onrender.com/api/resume-data")
+    fetch("https://webport-5ru9.onrender.com/api/resume-data")
       .then(res => res.json())
       .then(data => {
         setSkills(data.skills || []);
@@ -36,7 +36,7 @@ const Resume = () => {
       });
 
      
-    fetch("https://portfolio-px1j.onrender.com/api/content")
+    fetch("https://webport-5ru9.onrender.com/api/content")
       .then(res => res.json())
       .then(data => {
         if (data?.homeData?.heroTitle) {

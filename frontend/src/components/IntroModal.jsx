@@ -125,7 +125,7 @@ const IntroModal = () => {
 
   const typedChars = currentScreen.lines
     .slice(0, currentLine)
-    .reduce((a, l) => a + l.text.length, 0) + currentChar;
+    .reduce((a, l) => a + (l.type === 'command' ? 0 : l.text.length), 0) + currentChar;
   const totalChars = currentScreen.lines.reduce((a, l) => a + l.text.length, 0);
   const progress = totalChars > 0 ? Math.round((typedChars / totalChars) * 100) : 0;
 

@@ -37,7 +37,7 @@ const Payment = () => {
   useEffect(() => {
     const fetchServices = async () => {
       try {
-        const res = await fetch("https://portfolio-px1j.onrender.com/api/services");
+        const res = await fetch("https://webport-5ru9.onrender.com/api/services");
         if (res.ok) {
           const data = await res.json();
           setServicesList(data);
@@ -86,7 +86,7 @@ const Payment = () => {
     }
 
     try {
-      fetch("https://portfolio-px1j.onrender.com/api/messages", {
+      fetch("https://webport-5ru9.onrender.com/api/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -153,7 +153,7 @@ const Payment = () => {
     };
 
     try {
-      const dbRes = await fetch("https://portfolio-px1j.onrender.com/api/messages", {
+      const dbRes = await fetch("https://webport-5ru9.onrender.com/api/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(dataForDB)
@@ -218,7 +218,7 @@ const Payment = () => {
     }
 
     try {
-      const orderRes = await fetch("https://portfolio-px1j.onrender.com/api/payment/razorpay-order", {
+      const orderRes = await fetch("https://webport-5ru9.onrender.com/api/payment/razorpay-order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody) 
@@ -248,7 +248,7 @@ const Payment = () => {
         handler: async function (response) {
           setPaymentStatusMessage("Verifying transaction securely on server...");
           try {
-            const verifyRes = await fetch("https://portfolio-px1j.onrender.com/api/payment/gateway-success", {
+            const verifyRes = await fetch("https://webport-5ru9.onrender.com/api/payment/gateway-success", {
               method: "POST", 
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -568,7 +568,7 @@ const Payment = () => {
                             try {
                               const details = await actions.order.capture();
                               const res = await fetch(
-                                'https://portfolio-px1j.onrender.com/api/payment/gateway-success',
+                                'https://webport-5ru9.onrender.com/api/payment/gateway-success',
                                 {
                                   method: 'POST',
                                   headers: { 'Content-Type': 'application/json' },

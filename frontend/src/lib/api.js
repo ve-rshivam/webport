@@ -1,4 +1,4 @@
-const FALLBACK_API_BASE = 'https://portfolio-px1j.onrender.com';
+const FALLBACK_API_BASE = 'https://webport-5ru9.onrender.com';
 
 export const API_BASE = (import.meta.env.VITE_API_URL || FALLBACK_API_BASE).replace(/\/+$/, '');
 
