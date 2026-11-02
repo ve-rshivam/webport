@@ -184,6 +184,53 @@
 }
 
  
+
 html {
   scroll-behavior: smooth;
+  transition: background-color 0.5s ease, color 0.5s ease;
+}
+
+/* Theme toggle animation */
+.theme-toggle-flash {
+  animation: themeFlash 0.6s ease;
+}
+
+@keyframes themeFlash {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  30% {
+    transform: rotate(180deg) scale(1.15);
+  }
+  60% {
+    transform: rotate(360deg) scale(0.95);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+/* Page enter animation for intro modal */
+.intro-overlay {
+  animation: introFadeIn 0.5s ease forwards;
+}
+
+.intro-card {
+  animation: introSlideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes introFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes introSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }

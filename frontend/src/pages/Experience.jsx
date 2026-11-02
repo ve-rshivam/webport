@@ -78,7 +78,7 @@ const Experience = () => {
       </section>
 
       <div className="flex flex-wrap items-center gap-x-8 gap-y-4 border-t border-[var(--rule)] py-10">
-        <ArrowLink to="/resume">Read the résumé</ArrowLink>
+        <ArrowLink to="/resume">Read the resume</ArrowLink>
         <ArrowLink to="/projects">See the work</ArrowLink>
       </div>
     </PageShell>

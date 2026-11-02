@@ -1,22 +1,4 @@
-im
-app.put('/api/experience/:id', verifyAdminToken, checkPerm(['skills']), async (req, res) => {
-  try {
-    const { role, company, duration, description } = req.body;
-    const updated = await Experience.findByIdAndUpdate(req.params.id, { role, company, duration, description }, { new: true });
-    if (!updated) return res.status(404).json({ success: false, message: 'Experience not found.' });
-    res.json({ success: true, message: 'Experience updated.' });
-  } catch (err) { res.status(500).json({ success: false }); }
-});
-
-app.put('/api/education/:id', verifyAdminToken, checkPerm(['skills']), async (req, res) => {
-  try {
-    const { degree, institution, duration, score, description, location } = req.body;
-    const updated = await Education.findByIdAndUpdate(req.params.id, { degree, institution, duration, score, description, location }, { new: true });
-    if (!updated) return res.status(404).json({ success: false, message: 'Education not found.' });
-    res.json({ success: true, message: 'Education updated.' });
-  } catch (err) { res.status(500).json({ success: false }); }
-});
-port dns from 'dns';
+import dns from 'dns';
 dns.setDefaultResultOrder('ipv4first');
 import express from 'express';
 import cors from 'cors';
@@ -127,12 +109,29 @@ mongoose.connect(process.env.MONGO_URI, { family: 4 })
   .catch(err => console.log('❌ MongoDB Connection Error:', err));
 
 // 3 ALAG RESEND SETUP (Tumhari request ke according)
-const adminResend = new Resend(process.env.RESEND_API_KEY_ADMIN);
-const clientResend = new Resend(process.env.RESEND_API_KEY_CLIENT);
-const teamResend = new Resend(process.env.RESEND_API_KEY_TEAM);
+// Resend email setup — only create instances when API keys are available
+// Server starts fine without keys; email endpoints return errors gracefully
+let adminResend = null;
+let clientResend = null;
+let teamResend = null;
 
-// Testing email since custom domain is missing
-const senderEmail = 'onboarding@resend.dev';
+if (process.env.RESEND_API_KEY_ADMIN) adminResend = new Resend(process.env.RESEND_API_KEY_ADMIN);
+if (process.env.RESEND_API_KEY_CLIENT) clientResend = new Resend(process.env.RESEND_API_KEY_CLIENT);
+if (process.env.RESEND_API_KEY_TEAM) teamResend = new Resend(process.env.RESEND_API_KEY_TEAM);
+
+// Sender email — use your verified Resend domain when ready
+const senderEmail = process.env.RESEND_SENDER_EMAIL || 'onboarding@resend.dev';
+
+// Helper: safely send email, returns null if Resend not configured
+async function safeSend(resendInstance, params) {
+  if (!resendInstance) return null;
+  try {
+    return await resendInstance.emails.send(params);
+  } catch (err) {
+    console.log('Resend send error:', err.message);
+    return null;
+  }
+}
 
 const messageSchema = new mongoose.Schema({
   name: { type: String, trim: true, maxLength: 100 }, 
@@ -366,7 +365,7 @@ app.post('/api/admin/forgot-password', authLimiter, async (req, res) => {
 
     const activeResend = admin.role === 'superadmin' ? adminResend : teamResend;
 
-    await activeResend.emails.send({
+    await safeSend(activeResend, {
       from: senderEmail,
       to: admin.identifier,
       subject: "Secure System Access - 6-Digit OTP",
@@ -438,7 +437,7 @@ app.post('/api/messages', async (req, res) => {
               <p>Please check your Admin Dashboard to verify the payment and generate an Access Key for the client.</p>
             `
           };
-          await teamResend.emails.send(mailOptions);
+          await safeSend(teamResend, mailOptions);
         }
       } catch (mailError) { console.log("Mail setup error:", mailError); }
       
@@ -471,7 +470,7 @@ app.post('/api/messages', async (req, res) => {
               </div>
             `
           };
-          await teamResend.emails.send(contactMailOptions);
+          await safeSend(teamResend, contactMailOptions);
         }
       } catch (mailError) { console.log("Contact Mail setup error:", mailError); }
     }
@@ -582,7 +581,7 @@ app.post('/api/payment/gateway-success', async (req, res) => {
         await project.save();
 
         try {
-          await clientResend.emails.send({
+          await safeSend(clientResend, {
             from: senderEmail,
             to: email,
             subject: "🎉 Remaining Balance Received",
@@ -633,7 +632,7 @@ app.post('/api/payment/gateway-success', async (req, res) => {
         await newProject.save();
 
         try {
-          await clientResend.emails.send({
+          await safeSend(clientResend, {
             from: senderEmail,
             to: email,
             subject: "🎉 Payment Verified - Portal Login Details",
@@ -798,7 +797,7 @@ app.post('/api/client/forgot-password', authLimiter, async (req, res) => {
     );
 
     try {
-      await clientResend.emails.send({
+      await safeSend(clientResend, {
         from: senderEmail,
         to: email, 
         subject: "🔐 Password Reset - Your New Portal Access Key",
@@ -890,7 +889,7 @@ app.post('/api/client/send-message', async (req, res) => {
         process.env.ADMIN_EMAIL
       ].filter(Boolean).join(', '); 
 
-      await adminResend.emails.send({
+      await safeSend(adminResend, {
         from: senderEmail, 
         to: adminEmails || process.env.TEAM_EMAIL_USER, 
         subject: `📩 Portal Reply: ${project.clientName} (${project.projectTitle})`,
@@ -985,7 +984,7 @@ app.post('/api/admin/team', verifyAdminToken, async (req, res) => {
       });
       
       try {
-        await teamResend.emails.send({
+        await safeSend(teamResend, {
           from: senderEmail,
           to: identifier,
           subject: "🎉 Welcome to Shivam Web Studio Team",
@@ -1174,7 +1173,7 @@ app.post('/api/client-projects/:id/message', verifyAdminToken, checkPerm(['proje
 
    
     try {
-      await clientResend.emails.send({
+      await safeSend(clientResend, {
         from: senderEmail,
         to: project.clientEmail,
         subject: `📩 Important Message regarding ${project.projectTitle}`,
@@ -1222,7 +1221,7 @@ app.post('/api/admin/verify-client-payment/:id', verifyAdminToken, checkPerm(['p
     await project.save();
 
     try {
-      await clientResend.emails.send({
+      await safeSend(clientResend, {
         from: senderEmail,
         to: project.clientEmail,
         subject: "🎉 Payment Verified - Your Project Access Key",
@@ -1255,7 +1254,7 @@ app.post('/api/admin/approve-payment-message/:msgId', verifyAdminToken, checkPer
             await Message.findByIdAndDelete(req.params.msgId);
             
             try {
-              await clientResend.emails.send({
+              await safeSend(clientResend, {
                 from: senderEmail,
                 to: msg.email,
                 subject: "🎉 Remaining Balance Verified",
@@ -1293,7 +1292,7 @@ app.post('/api/admin/approve-payment-message/:msgId', verifyAdminToken, checkPer
     await newProject.save();
 
     try {
-      await clientResend.emails.send({
+      await safeSend(clientResend, {
         from: senderEmail,
         to: msg.email,
         subject: "🎉 Payment Verified - Portal Login Details",
@@ -1318,7 +1317,7 @@ app.post('/api/admin/reject-payment-message/:msgId', verifyAdminToken, checkPerm
     const rejectReason = req.body.reason || "Invalid Transaction ID or Unclear Screenshot";
 
     try {
-      await clientResend.emails.send({
+      await safeSend(clientResend, {
         from: senderEmail,
         to: msg.email,
         subject: "⚠️ Action Required: Payment Verification Failed",

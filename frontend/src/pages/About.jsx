@@ -91,7 +91,7 @@ const About = () => {
           Want the longer version, or the version with code?
         </p>
         <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
-          <ArrowLink to="/resume">Read the résumé</ArrowLink>
+          <ArrowLink to="/resume">Read the resume</ArrowLink>
           <ArrowLink to="/contact">Start a conversation</ArrowLink>
         </div>
       </div>

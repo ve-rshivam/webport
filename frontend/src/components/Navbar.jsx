@@ -32,7 +32,7 @@ const Navbar = () => {
         <Link to="/" aria-label="Shivam Kumar — home" className="flex shrink-0 items-center gap-2.5">
           <span className="h-2 w-2 bg-[var(--signal)]" aria-hidden="true" />
           <span className="font-display text-[1.35rem] leading-none text-[var(--ink)] sm:text-[1.55rem]">
-            Shivam Kumar
+            Rshivam
           </span>
         </Link>
 

@@ -156,7 +156,7 @@ const Skills = () => {
 
       <div className="flex flex-wrap items-center gap-x-8 gap-y-4 border-t border-[var(--rule)] py-10">
         <ArrowLink to="/projects">See the work</ArrowLink>
-        <ArrowLink to="/resume">Read the résumé</ArrowLink>
+        <ArrowLink to="/resume">Read the resume</ArrowLink>
       </div>
     </PageShell>
   );

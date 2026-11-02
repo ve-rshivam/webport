@@ -17,6 +17,8 @@ export const ThemeProvider = ({ children }) => {
     root.classList.toggle('dark', theme === 'dark');
     root.classList.toggle('light', theme !== 'dark');
     root.style.colorScheme = theme;
+    // Smooth transition on theme change
+    root.style.transition = 'background-color 0.5s ease, color 0.5s ease';
   }, [theme]);
 
   useEffect(() => {
@@ -43,6 +45,12 @@ export const ThemeProvider = ({ children }) => {
       localStorage.setItem('themeManuallySet', 'true');
     } catch {
       // Storage can be unavailable; the in-memory theme still toggles.
+    }
+    // Add flash animation to button
+    const btn = document.querySelector('[aria-label="Switch to light theme"], [aria-label="Switch to dark theme"]');
+    if (btn) {
+      btn.classList.add('theme-toggle-flash');
+      btn.addEventListener('animationend', () => btn.classList.remove('theme-toggle-flash'), { once: true });
     }
     setTheme((prevTheme) => (prevTheme === 'dark' ? 'light' : 'dark'));
   };

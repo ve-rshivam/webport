@@ -136,7 +136,7 @@ const Home = () => {
                 to="/resume"
                 className="inline-flex items-center gap-2 font-mono-ui text-[11px] uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors hover:text-[var(--signal)]"
               >
-                Read résumé <span aria-hidden="true">→</span>
+                Read resume <span aria-hidden="true">→</span>
               </Link>
             </div>
           </motion.div>

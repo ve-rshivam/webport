@@ -6,6 +6,7 @@ import Navbar from './components/Navbar';
 import Chatbot from './components/Chatbot';
 import Footer from './components/Footer';
 import PageWrapper from './components/PageWrapper';
+import IntroModal from './components/IntroModal';
 
 import Home from './pages/Home';
 import Skills from './pages/Skills';
@@ -71,6 +72,7 @@ function App() {
         </main>
         <Footer />
         <Chatbot />
+        <IntroModal />
       </div>
     </Router>
   );
