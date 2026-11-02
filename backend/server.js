@@ -162,7 +162,21 @@ const educationSchema = new mongoose.Schema({ degree: String, institution: Strin
 const Education = mongoose.model('Education', educationSchema);
 
 const contentSchema = new mongoose.Schema({
-  homeData: { heroTitle: { type: String, default: "Hi, I am Shivam Singh" }, heroSubtitle: { type: String, default: "Full-Stack Web Developer" } },
+  homeData: {
+    heroTitle: { type: String, default: "Hi, I am Shivam Singh" },
+    heroSubtitle: { type: String, default: "Full-Stack Web Developer" },
+    roles: {
+      type: [String],
+      default: [
+        "Full-Stack Web Developer",
+        "AI & ML Enthusiast",
+        "Google Student Ambassador '26",
+        "Microsoft Learn Student Ambassador",
+        "DSA Problem Solver",
+        "Open Source Contributor",
+      ],
+    },
+  },
   aboutData: { description: { type: String, default: "I am a passionate developer..." } },
   contactData: [{ title: String, url: String, icon: String }],
   policyData: { privacy: { type: String, default: "" }, terms: { type: String, default: "" }, refund: { type: String, default: "" } }
@@ -1184,6 +1198,15 @@ app.delete('/api/reviews/:id', verifyAdminToken, checkPerm(['reviews']), async (
 app.post('/api/content/update', verifyAdminToken, checkPerm(['cms']), async (req, res) => {
   try {
     const { homeData, aboutData, contactData, policyData } = req.body;
+
+    if (homeData && Array.isArray(homeData.roles)) {
+      homeData.roles = homeData.roles
+        .filter((role) => typeof role === 'string')
+        .map((role) => role.trim())
+        .filter(Boolean)
+        .slice(0, 20);
+    }
+
     await Content.findOneAndUpdate({}, { homeData, aboutData, contactData, policyData }, { upsert: true, new: true });
     res.json({ success: true, message: "Website Updated!" });
   } catch (err) { res.status(500).json({ error: "Update failed" }); }

@@ -49,12 +49,18 @@ const Home = () => {
       .then((data) => {
         if (!data) return;
 
-        if (data.homeData?.heroSubtitle) {
-          setHomeContent((prev) => ({
-            ...prev,
-            heroSubtitle: data.homeData.heroSubtitle,
-          }));
-        }
+        const roles = Array.isArray(data.homeData?.roles)
+          ? data.homeData.roles.map((role) => String(role).trim()).filter(Boolean)
+          : [];
+
+        setHomeContent((prev) => ({
+          ...prev,
+          heroSubtitle:
+            typeof data.homeData?.heroSubtitle === 'string' && data.homeData.heroSubtitle.trim()
+              ? data.homeData.heroSubtitle
+              : prev.heroSubtitle,
+          roles: roles.length > 0 ? roles : prev.roles,
+        }));
 
         if (data.aboutData?.description) {
           setAboutContent({ description: data.aboutData.description });
@@ -115,7 +121,9 @@ const Home = () => {
             </h1>
 
             <p className="mt-8 max-w-xl text-lg leading-relaxed text-[var(--ink-soft)] md:text-xl">
-              {homeContent.heroSubtitle}
+              {homeContent.roles.length > 0
+                ? homeContent.roles.join(' · ')
+                : homeContent.heroSubtitle}
             </p>
 
             <div className="mt-10 flex flex-wrap items-center gap-x-8 gap-y-4">
@@ -184,7 +192,7 @@ const Home = () => {
           <span className="eyebrow text-[var(--signal)]">Currently</span>
           <ul className="flex flex-wrap items-center gap-x-5 gap-y-2 font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
             {homeContent.roles.map((role, index) => (
-              <li key={role} className="flex items-center gap-5">
+              <li key={`${role}-${index}`} className="flex items-center gap-5">
                 {index > 0 && <span aria-hidden="true" className="h-3 w-px bg-[var(--rule)]" />}
                 {role}
               </li>
@@ -308,7 +316,7 @@ const Home = () => {
                 <ul className="mt-4">
                   {homeContent.roles.map((role, index) => (
                     <li
-                      key={role}
+                      key={`${role}-${index}`}
                       className="flex gap-4 border-b border-[var(--rule)] py-2.5 text-sm text-[var(--ink)]"
                     >
                       <span className="font-mono-ui text-[10px] text-[var(--signal)]">

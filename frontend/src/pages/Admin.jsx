@@ -63,7 +63,7 @@ const Admin = () => {
 
 
   const [cmsStatus, setCmsStatus] = useState('');
-  const [homeData, setHomeData] = useState({ heroTitle: '', heroSubtitle: '' });
+  const [homeData, setHomeData] = useState({ heroTitle: '', heroSubtitle: '', roles: [] });
   const [aboutData, setAboutData] = useState({ description: '' });
   const [contactData, setContactData] = useState([]);
   const [policyData, setPolicyData] = useState({ privacy: '', terms: '', refund: '' });
@@ -112,7 +112,10 @@ const Admin = () => {
         const contentRes = await fetch("https://webport-5ru9.onrender.com/api/content");
         if(contentRes.ok) {
           const content = await contentRes.json();
-          setHomeData(content.homeData || {});
+          setHomeData({
+            ...content.homeData,
+            roles: Array.isArray(content.homeData?.roles) ? content.homeData.roles : [],
+          });
           setAboutData(content.aboutData || {});
           setContactData(Array.isArray(content.contactData) ? content.contactData : []);
           setPolicyData(content.policyData || {});
@@ -1371,8 +1374,39 @@ const Admin = () => {
                 <h3 className="text-[var(--accent)] m-0 mb-4">Home & about info</h3>
                 <label className="block m-0 mb-2 text-[var(--text-dim)] text-sm font-bold">Hero Title</label>
                 <input type="text" value={homeData?.heroTitle || ''} onChange={e => setHomeData({...homeData, heroTitle: e.target.value})} className={inputClass} />
-                <label className="block m-0 mb-2 text-[var(--text-dim)] text-sm font-bold mt-4">Hero Subtitle</label>
+                <label className="block m-0 mb-2 text-[var(--text-dim)] text-sm font-bold mt-4">Hero Subtitle (used only when no roles are set)</label>
                 <input type="text" value={homeData?.heroSubtitle || ''} onChange={e => setHomeData({...homeData, heroSubtitle: e.target.value})} className={inputClass} />
+                <label className="block m-0 mb-2 text-[var(--text-dim)] text-sm font-bold mt-4">Roles / Titles</label>
+                <p className="m-0 mb-3 text-xs text-[var(--text-dim)]">These appear on the home page under “Currently” and “Disciplines”. Add, edit or remove any role.</p>
+                {(homeData.roles || []).map((role, idx) => (
+                  <div key={idx} className="flex gap-2 mb-2">
+                    <input
+                      type="text"
+                      value={role}
+                      onChange={e => {
+                        const nextRoles = [...(homeData.roles || [])];
+                        nextRoles[idx] = e.target.value;
+                        setHomeData({ ...homeData, roles: nextRoles });
+                      }}
+                      placeholder="e.g. Full-Stack Web Developer"
+                      className={inputClass}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setHomeData({ ...homeData, roles: (homeData.roles || []).filter((_, i) => i !== idx) })}
+                      className="px-2 py-1 text-xs bg-transparent text-[#ff4d4d] border border-[#ff4d4d] rounded hover:bg-[#ff4d4d]/10 transition-colors"
+                    >
+                      X
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setHomeData({ ...homeData, roles: [...(homeData.roles || []), ''] })}
+                  className="text-left text-sm text-[var(--accent)] border border-[var(--accent)] rounded px-4 py-2 hover:bg-[var(--accent)]/10 transition-colors"
+                >
+                  + Add role
+                </button>
                 <label className="block m-0 mb-2 text-[var(--text-dim)] text-sm font-bold mt-4">About Main Description</label>
                 <textarea rows="4" value={aboutData?.description || ''} onChange={e => setAboutData({...aboutData, description: e.target.value})} className={`${inputClass} resize-none`}></textarea>
               </div>
