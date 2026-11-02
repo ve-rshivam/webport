@@ -1540,6 +1540,19 @@ app.get('/api/linkedin-skills', async (req, res) => {
     return res.status(200).json([]); 
   } catch (error) { res.status(200).json([]); }
 });
+// Health check route to prevent spin-down & monitor uptime
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Optional: HEAD request support (less bandwidth consumption)
+app.head('/health', (req, res) => {
+  res.status(200).end();
+});
 
 const PORT = process.env.PORT || 5000;
 
