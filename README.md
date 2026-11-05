@@ -52,19 +52,19 @@ without configuration.
 ## Environment
 
 Copy `backend/.env.example` to `backend/.env` and fill in the values. Secrets are
-never committed. The transactional email variables are:
+never committed. Configure transactional email using these backend variables:
 
 ```env
-RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxx
+RESEND_API_KEY=<Resend API key>
 APP_BASE_URL=https://rshivam.dev
-EMAIL_FROM=noreply@rshivam.dev
-EMAIL_SUPPORT=contact@rshivam.dev
+EMAIL_FROM=<verified sender mailbox>
+EMAIL_SUPPORT=<support mailbox>
+ADMIN_NOTIFY_EMAIL=<admin notification mailbox>
 ```
 
-`RESEND_API_KEY` must belong to a Resend account with `rshivam.dev` verified
+`RESEND_API_KEY` must belong to a Resend account with the sender domain verified
 (SPF, DKIM, DMARC). Without a verified domain, Resend only delivers to the
-account owner's own address. See [EMAIL_SYSTEM.md](EMAIL_SYSTEM.md) for the full
-DNS, mailbox and deliverability specification.
+account owner's own address.
 
 ## API surface (selected)
 
@@ -86,12 +86,10 @@ bcrypt hashes, never as plain text.
 ## Email
 
 Automated mail (portal credentials, OTPs, payment confirmations, admin alerts) is
-sent from the Express backend through the Resend API. Human replies are routed to
-`contact@rshivam.dev` via `Reply-To`, while inbound mail to the domain is handled
-by Cloudflare Email Routing and read through Mailflare.
-
-Full details — architecture, DNS records, mailbox delegation, endpoint contract
-and security protocols — are in [EMAIL_SYSTEM.md](EMAIL_SYSTEM.md).
+sent from the Express backend through the configured email providers. Human replies
+use the `EMAIL_SUPPORT` backend environment variable. Public contact and support
+addresses are configured with `VITE_CONTACT_EMAIL` and `VITE_SUPPORT_EMAIL`; Vite
+variables are included in the public browser build and are not secrets.
 
 ## Deployment notes
 

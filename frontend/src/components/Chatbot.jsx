@@ -131,7 +131,7 @@ const Chatbot = () => {
         aria-controls="chat-panel"
         className="flex items-center gap-2 border border-[var(--ink)] bg-[var(--paper)] px-4 py-2.5 font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)]"
       >
-        {isOpen ? 'Close' : 'Ask ↗'}
+        {isOpen ? 'Close' : 'Ask'}
       </button>
     </div>
   );

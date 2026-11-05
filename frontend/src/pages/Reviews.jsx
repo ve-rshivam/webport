@@ -146,7 +146,7 @@ const Reviews = () => {
 
               <div className="flex flex-wrap items-center justify-between gap-4 pt-6">
                 <button type="submit" disabled={isSubmitting} className={buttonClass}>
-                  {isSubmitting ? 'Submitting…' : 'Publish review ↗'}
+                  {isSubmitting ? 'Submitting…' : 'Publish review'}
                 </button>
                 <p className="text-sm text-[var(--ink-soft)]" role="status">
                   {formStatus}

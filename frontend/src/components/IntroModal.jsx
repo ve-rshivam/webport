@@ -51,8 +51,7 @@ const IntroModal = () => {
     try {
       localStorage.setItem('introSeen', 'true');
     } catch {
-      // storage can be unavailable in private mode; dismissal still works
-    }
+          }
     setVisible(false);
   }, []);
 
@@ -74,10 +73,7 @@ const IntroModal = () => {
     return () => clearTimeout(t);
   }, [visible, started]);
 
-  // One timer per state: every char, line and screen transition re-runs this
-  // effect with fresh values, so the animation always advances and the progress
-  // counter reaches exactly 100% on the final character.
-  useEffect(() => {
+        useEffect(() => {
     if (!visible || !started) return undefined;
 
     const screen = SCREENS[screenIndex];
@@ -93,8 +89,7 @@ const IntroModal = () => {
         return () => clearTimeout(t);
       }
 
-      // Everything typed: progress is at 100%, close on its own.
-      const t = setTimeout(dismiss, CLOSE_DELAY);
+            const t = setTimeout(dismiss, CLOSE_DELAY);
       return () => clearTimeout(t);
     }
 
@@ -153,7 +148,7 @@ const IntroModal = () => {
           onClick={handleOverlayClick}
         >
           <div className="w-full max-w-lg overflow-hidden rounded-lg border border-[var(--rule)] bg-[#0d0d0d] shadow-2xl">
-            {/* Title bar */}
+            { }
             <div className="flex items-center gap-2 border-b border-[var(--rule)] bg-[#1a1a1a] px-4 py-2.5">
               <span className="flex h-3 w-3 rounded-full bg-[#ff5f57]" />
               <span className="flex h-3 w-3 rounded-full bg-[#febc2e]" />
@@ -163,7 +158,7 @@ const IntroModal = () => {
               </span>
             </div>
 
-            {/* Terminal body */}
+            { }
             <div className="px-5 py-4 font-mono text-sm leading-7 text-[#c9c9c9]">
               {currentScreen.lines.slice(0, currentLine).map((line, i) => (
                 <div key={i} className="text-[var(--ink-soft)]">
@@ -201,7 +196,7 @@ const IntroModal = () => {
               ))}
             </div>
 
-            {/* Status bar */}
+            { }
             <div className="border-t border-[var(--rule)] bg-[#1a1a1a] px-4 py-1.5 flex items-center justify-between text-[10px] font-mono-ui text-[#666]">
               <span className="text-[#c9c9c9]">{String.fromCharCode(125)}</span>
               <span className="text-[#888]">

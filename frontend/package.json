@@ -10,13 +10,18 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@paypal/checkout-server-sdk": "^1.0.3",
     "@paypal/react-paypal-js": "^9.2.0",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.6.1",
+    "bcryptjs": "^3.0.3",
     "framer-motion": "^12.43.0",
+    "razorpay": "^2.9.8",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-router-dom": "^7.15.0",
+    "resend": "^6.37.0",
+    "socket.io-client": "^4.8.4",
     "three": "^0.184.0"
   },
   "devDependencies": {

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { apiGet, apiUrl } from '../lib/api';
+import { CONTACT_EMAIL, emailHref } from '../lib/contact';
 import {
   ArrowLink,
   PageIntro,
@@ -13,7 +14,7 @@ const SOCIALS = [
   { name: 'LinkedIn', url: 'https://linkedin.com/in/ve-rshivam' },
   { name: 'GitHub', url: 'https://github.com/ve-rshivam' },
   { name: 'Instagram', url: 'https://instagram.com/ve.rshivam' },
-  { name: 'Email', url: 'mailto:getus.shivam@gmail.com' },
+  ...(CONTACT_EMAIL ? [{ name: 'Email', url: emailHref(CONTACT_EMAIL) }] : []),
   { name: 'Twitter / X', url: 'https://x.com/ve8rshivam' },
 ];
 
@@ -141,7 +142,7 @@ const Contact = () => {
 
             <div className="flex flex-wrap items-center justify-between gap-4 pt-6">
               <button type="submit" disabled={isSending} className={buttonClass}>
-                {isSending ? 'Sending…' : 'Send message ↗'}
+                {isSending ? 'Sending…' : 'Send message'}
               </button>
               <p className="max-w-sm text-sm text-[var(--ink-soft)]" role="status">
                 {result}
@@ -168,9 +169,6 @@ const Contact = () => {
                     className="group flex items-baseline justify-between py-3 text-sm text-[var(--ink)] transition-colors hover:text-[var(--signal)]"
                   >
                     {social.name}
-                    <span aria-hidden="true" className="font-mono-ui text-[10px]">
-                      ↗
-                    </span>
                   </a>
                 </li>
               ))}
@@ -184,9 +182,6 @@ const Contact = () => {
                     className="group flex items-baseline justify-between py-3 text-sm text-[var(--ink)] transition-colors hover:text-[var(--signal)]"
                   >
                     {link.title}
-                    <span aria-hidden="true" className="font-mono-ui text-[10px]">
-                      ↗
-                    </span>
                   </a>
                 </li>
               ))}

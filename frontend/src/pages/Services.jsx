@@ -83,6 +83,14 @@ const mergeServices = (serverServices) => {
   return Array.from(byTitle.values());
 };
 
+const servicePriceLabel = (price) => {
+  const amount = Number(String(price ?? '').replace(/[^0-9.]/g, ''));
+  if (Number.isFinite(amount) && amount > 0) {
+    return `₹${amount.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+  }
+  return price || 'Quote on request';
+};
+
 const Services = () => {
   const [services, setServices] = useState([]);
   const [status, setStatus] = useState('loading');
@@ -142,10 +150,10 @@ const Services = () => {
 
                   <div className="col-span-10 col-start-3 flex items-center justify-between gap-4 md:col-span-2 md:col-start-auto md:justify-end">
                     <span className="font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
-                      {service.price || 'Quote on request'}
+                      {servicePriceLabel(service.price)}
                     </span>
                     <span className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors group-hover:text-[var(--signal)]">
-                      Select ↗
+                      Select
                     </span>
                   </div>
                 </button>
@@ -187,7 +195,7 @@ const Services = () => {
                 </p>
               </div>
               <button type="button" onClick={() => navigate('/contact')} className={buttonClass}>
-                Discuss a project ↗
+                Discuss a project
               </button>
             </div>
           </div>

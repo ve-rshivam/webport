@@ -1,108 +1,251 @@
 import { useState, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import PageWrapper from '../components/PageWrapper';
+import { apiUrl, portalApi, portalSession } from '../lib/api';
+import { SUPPORT_EMAIL, emailHref } from '../lib/contact';
 import './ClientPortal.css';
 
+const formatInr = (value) =>
+  `\u20b9${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+
+const paymentStatusLabel = (status) => ({
+  FULLY_PAID: 'Fully paid',
+  PARTIALLY_PAID: 'Partially paid',
+  PENDING: 'Pending',
+}[status] || status || 'Not set');
+
 function ClientPortal() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const pendingCheckout = location.state || {};
+  const sessionExpiredNotice = new URLSearchParams(window.location.search).has('sessionExpired')
+    ? 'Session expired due to inactivity.'
+    : '';
+
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState(
+    pendingCheckout.paymentSubmitted
+      ? 'Payment received. Once verification finishes, sign in with the temporary password sent to your email.'
+      : sessionExpiredNotice
+  );
+  const [session, setSession] = useState(null);
   const [projectsList, setProjectsList] = useState([]);
   const [activeProjectId, setActiveProjectId] = useState('');
   const [showWelcomePopup, setShowWelcomePopup] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [loginData, setLoginData] = useState({ email: '', accessKey: '' });
+  const [loginData, setLoginData] = useState({ email: pendingCheckout.email || '', password: '' });
+  const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotMsg, setForgotMsg] = useState('');
   const [forgotError, setForgotError] = useState('');
-  const [otpCode, setOtpCode] = useState('');
-  const [otpLoading, setOtpLoading] = useState(false);
-  const [otpMsg, setOtpMsg] = useState('');
-  const [otpError, setOtpError] = useState('');
-  const [newKey, setNewKey] = useState('');
-  const [showForgot, setShowForgot] = useState(false);
+  // [H2] Secure reset link ka single-use token (/portal?resetToken=...). 6-digit OTP flow hata diya gaya.
+  const [resetToken] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    return new URLSearchParams(window.location.search).get('resetToken') || '';
+  });
+  const [resetKey, setResetKey] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetMsg, setResetMsg] = useState('');
+  const [resetError, setResetError] = useState('');
+  const [showForgot, setShowForgot] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return Boolean(new URLSearchParams(window.location.search).get('resetToken'));
+  });
   const [clientReply, setClientReply] = useState('');
   const [isSendingReply, setIsSendingReply] = useState(false);
+  const [thread, setThread] = useState({ projectId: null, items: [], loading: false, error: '' });
+  const [invoiceDownloading, setInvoiceDownloading] = useState(false);
+  const [invoiceError, setInvoiceError] = useState('');
 
-  const projectData = projectsList.find((p) => p._id === activeProjectId) || projectsList[0];
+  const projectData = projectsList.find((p) => p.id === activeProjectId) || projectsList[0];
+  const threadMatches = Boolean(projectData?.id) && thread.projectId === projectData.id;
+  const messages = threadMatches ? thread.items : [];
+  const messagesLoading = Boolean(projectData?.id) && (!threadMatches || thread.loading);
+  const messagesError = threadMatches ? thread.error : '';
 
-  useEffect(() => {
-    const refreshProjectData = async () => {
-      const savedEmail = localStorage.getItem('clientEmail');
-      if (!isLoggedIn || !savedEmail) return;
+    useEffect(() => {
+    const restoreSession = async () => {
+      if (!portalSession.getToken()) return;
       try {
-        const res = await fetch('https://webport-5ru9.onrender.com/api/client/get-projects', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: savedEmail }),
-        });
-        const data = await res.json();
-        if (data.success && data.projects && data.projects.length > 0) {
-          setProjectsList(data.projects);
-          localStorage.setItem('clientProjectsList', JSON.stringify(data.projects));
-
-          if (!activeProjectId) {
-            setActiveProjectId(data.projects[0]._id);
-          }
-        }
+        const data = await portalApi.me();
+        setSession({ user: data.user ?? null });
+        setProjectsList(data.projects ?? []);
+        setActiveProjectId(data.projects?.[0]?.id ?? '');
+        setMustChangePassword(Boolean(data.mustChangePassword));
+        setShowWelcomePopup(!data.mustChangePassword);
+        setIsLoggedIn(true);
       } catch {
-        console.log('Refresh failed, using cached data.');
+        portalSession.clear();
       }
     };
-    refreshProjectData();
-  }, [isLoggedIn, activeProjectId]);
+    restoreSession();
+  }, []);
+
+  useEffect(() => {
+    if (!isLoggedIn) return undefined;
+    let disposed = false;
+    let socket = null;
+
+    const onProjectMutated = ({ action, project, user } = {}) => {
+      if (!project?.id) return;
+      if (user?.name || user?.email) {
+        setSession((current) => current
+          ? { ...current, user: { ...current.user, ...user } }
+          : current);
+      }
+      if (action === 'deleted') {
+        setActiveProjectId((activeId) => activeId === project.id ? '' : activeId);
+        setProjectsList((current) => current.filter((item) => item.id !== project.id));
+        return;
+      }
+      setProjectsList((current) => current.some((item) => item.id === project.id)
+        ? current.map((item) => item.id === project.id ? { ...item, ...project } : item)
+        : [project, ...current]);
+      setActiveProjectId((activeId) => activeId || project.id);
+    };
+
+    const onMessageNew = ({ message } = {}) => {
+      if (!message?.projectId) return;
+      setThread((current) => {
+        if (current.projectId !== message.projectId || (current.items || []).some((item) => item.id === message.id)) {
+          return current;
+        }
+        return { ...current, items: [...(current.items || []), message] };
+      });
+    };
+
+    import('../lib/socket').then(({ connectRealtimeSocket }) => {
+      if (disposed) return;
+      socket = connectRealtimeSocket(portalSession.getToken());
+      if (!socket) return;
+      socket.on('project:mutated', onProjectMutated);
+      socket.on('message:new', onMessageNew);
+    }).catch((err) => console.warn('Could not connect to live portal updates:', err));
+    return () => {
+      disposed = true;
+      if (!socket) return;
+      socket.off('project:mutated', onProjectMutated);
+      socket.off('message:new', onMessageNew);
+    };
+  }, [isLoggedIn]);
+
+    useEffect(() => {
+    const onExpired = () => {
+      setIsLoggedIn(false);
+      setSession(null);
+      setProjectsList([]);
+      setActiveProjectId('');
+      setShowWelcomePopup(false);
+      setShowSettings(false);
+      setShowPasswordModal(false);
+      setMustChangePassword(false);
+      setError('Your session ended. Sign in again to continue.');
+    };
+    window.addEventListener('auth:expired', onExpired);
+    return () => window.removeEventListener('auth:expired', onExpired);
+  }, []);
+
+      useEffect(() => {
+    if (!isLoggedIn || !projectData?.id) return undefined;
+    const projectId = projectData.id;
+    let cancelled = false;
+
+    portalApi
+      .listMessages(projectId)
+      .then((data) => {
+        if (!cancelled) {
+          setThread({ projectId, items: data.messages ?? [], loading: false, error: '' });
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setThread({
+            projectId,
+            items: [],
+            loading: false,
+            error: err.message || 'Could not load messages.',
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn, projectData?.id]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setNotice('');
 
     try {
-      const res = await fetch('https://webport-5ru9.onrender.com/api/client/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(loginData),
-      });
-      const data = await res.json();
+      const data = await portalApi.login(loginData.email.trim(), loginData.password);
+      portalSession.save(data.token, data.user?.email ?? loginData.email.trim());
 
-      if (data.success) {
-        if (!data.projects || data.projects.length === 0) {
-          setError('Please contact the administrator. Your project data is missing.');
-          setLoading(false);
-          return;
-        }
-        localStorage.setItem('clientLoggedIn', 'true');
-        localStorage.setItem('clientEmail', loginData.email);
-        localStorage.setItem('clientProjectsList', JSON.stringify(data.projects));
-
-        setProjectsList(data.projects);
-        setActiveProjectId(data.projects[0]._id);
-        setIsLoggedIn(true);
-        setShowWelcomePopup(true);
-      } else {
-        setError(data.message || 'Invalid credentials. Ensure your payment is verified.');
-      }
-    } catch {
-      setError('Server connection error. Please try again later.');
+      setSession({ user: data.user ?? null });
+      setProjectsList(data.projects ?? []);
+      setActiveProjectId(data.projects?.[0]?.id ?? '');
+      setMustChangePassword(Boolean(data.mustChangePassword));
+      setIsLoggedIn(true);
+      setLoginData((prev) => ({ ...prev, password: '' }));
+      setShowWelcomePopup(!data.mustChangePassword);
+    } catch (err) {
+      setError(err.message || 'Invalid credentials. Ensure your payment is verified.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('clientLoggedIn');
-    localStorage.removeItem('clientEmail');
-    localStorage.removeItem('clientProjectsList');
+  const handleLogout = async () => {
+    try {
+      await portalApi.logout();
+    } catch {
+          }
+    portalSession.clear();
+    import('../lib/socket').then(({ disconnectRealtimeSocket }) => disconnectRealtimeSocket());
     setIsLoggedIn(false);
+    setSession(null);
     setProjectsList([]);
     setActiveProjectId('');
-    setIsLoggedIn(false);
     setShowWelcomePopup(false);
     setShowSettings(false);
     setShowPasswordModal(false);
+    setMustChangePassword(false);
+    setThread({ projectId: null, items: [], loading: false, error: '' });
     setError('');
+    setNotice('');
+  };
+
+  // [SESSION CONTROL] Server par session token + device binding clear karke sab devices se sign out.
+  const handleLogoutAll = async () => {
+    if (!window.confirm('Sign out of the portal on every device? Every active session will be revoked.')) return;
+    try {
+      await portalApi.logoutAll();
+    } catch {
+          }
+    portalSession.clear();
+    import('../lib/socket').then(({ disconnectRealtimeSocket }) => disconnectRealtimeSocket());
+    setIsLoggedIn(false);
+    setSession(null);
+    setProjectsList([]);
+    setActiveProjectId('');
+    setShowSettings(false);
+    setShowPasswordModal(false);
+    setShowWelcomePopup(false);
+    setMustChangePassword(false);
+    setThread({ projectId: null, items: [], loading: false, error: '' });
+    setError('');
+    setNotice('Signed out of every device.');
   };
 
   const handleForgotPassword = async (e) => {
@@ -111,91 +254,75 @@ function ClientPortal() {
     setForgotLoading(true);
     setForgotMsg('');
     setForgotError('');
-    setOtpCode('');
-    setNewKey('');
-    setOtpMsg('');
-    setOtpError('');
     try {
-      const res = await fetch('https://webport-5ru9.onrender.com/api/client/forgot-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: forgotEmail }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setForgotMsg('If that email is on file, the reset code has been sent to your inbox. Check your spam folder if you do not see it.');
-        if (data.otpProvided) {
-          setOtpCode(String(data.otp).toString().slice(-6));
-        }
-        setOtpLoading(false);
-        setOtpMsg('');
-        setNewKey('');
-        setOtpError('');
-        setForgotLoading(false);
-      } else {
-        setForgotError(data.message || 'If that email is on file, the reset code has been sent to your inbox. Check your spam folder if you do not see it.');
-      }
-    } catch {
-      setForgotError('Server connection error. Please try again later.');
+      const data = await portalApi.forgotPassword(forgotEmail.trim());
+      setForgotMsg(
+        data.message ||
+          'If that email is on file, a secure reset link has been sent. It expires in 15 minutes — check your spam folder if you do not see it.'
+      );
+    } catch (err) {
+      setForgotError(err.message || 'Server connection error. Please try again later.');
     } finally {
       setForgotLoading(false);
     }
   };
 
-  const handleResetWithOtp = async (e) => {
+  const handleResetWithToken = async (e) => {
     e.preventDefault();
-    if (!forgotEmail || !otpCode || !newKey) return;
-    setOtpLoading(true);
-    setOtpMsg('');
-    setOtpError('');
+    if (!resetToken || resetKey.length < 8) return;
+    setResetLoading(true);
+    setResetMsg('');
+    setResetError('');
     try {
-      const res = await fetch('https://webport-5ru9.onrender.com/api/client/reset-password-with-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: forgotEmail, otp: otpCode, newKey }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setOtpMsg('New access key saved. You can now sign in with it.');
-        setOtpCode('');
-        setNewKey('');
-        setOtpLoading(false);
-        setForgotMsg('');
-        setForgotError('');
-      } else {
-        setOtpError(data.message || 'Could not set the new access key. Try again.');
-      }
-    } catch {
-      setOtpError('Server connection error. Please try again later.');
+      const data = await portalApi.resetPasswordWithToken(resetToken, resetKey);
+      setResetMsg(data.message || 'New password saved. You can now sign in with it.');
+      setResetKey('');
+      setForgotMsg('');
+      setForgotError('');
+      // Token single-use hai — URL se hata dete hain taaki back/refresh par dobara na chale.
+      try {
+        window.history.replaceState({}, '', '/portal');
+      } catch {}
+    } catch (err) {
+      setResetError(err.message || 'Could not set the new password. Request a new reset link.');
     } finally {
-      setOtpLoading(false);
+      setResetLoading(false);
+    }
+  };
+
+  const handleSetPassword = async (e) => {
+    e.preventDefault();
+    if (newPassword !== confirmPassword) {
+      setPasswordError('The two passwords do not match.');
+      return;
+    }
+    setPasswordLoading(true);
+    setPasswordError('');
+    try {
+      await portalApi.setPassword(newPassword);
+      setMustChangePassword(false);
+      setNewPassword('');
+      setConfirmPassword('');
+      setNotice('Password saved. Your portal is ready.');
+    } catch (err) {
+      setPasswordError(err.message || 'Could not save the password.');
+    } finally {
+      setPasswordLoading(false);
     }
   };
 
   const handleSendReply = async (e) => {
     e.preventDefault();
-    if (!clientReply.trim() || !projectData) return;
+    if (!clientReply.trim() || !projectData?.id) return;
 
     setIsSendingReply(true);
     try {
-      const res = await fetch('https://webport-5ru9.onrender.com/api/client/send-message', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: projectData.clientEmail,
-          projectId: projectData._id,
-          message: clientReply,
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        alert('Your message has been sent to the developer!');
-        setClientReply('');
-      } else {
-        alert('Failed to send message. Please try again.');
-      }
-    } catch {
-      alert('Server error while sending message.');
+      await portalApi.sendMessage(projectData.id, clientReply.trim());
+      setClientReply('');
+      const data = await portalApi.listMessages(projectData.id);
+      setThread({ projectId: projectData.id, items: data.messages ?? [], loading: false, error: '' });
+    } catch (err) {
+      alert(err.message || 'Server error while sending message.');
     } finally {
       setIsSendingReply(false);
     }
@@ -203,18 +330,51 @@ function ClientPortal() {
 
   const handlePayRemaining = () => {
     if (!projectData) return;
-    const gateUrl = 'https://webport-5ru9.onrender.com';
-    const payUrl =
-      gateUrl +
-      '/api/payment/razorpay-order?serviceId=&amount=' +
-      projectData.balanceDue +
-      '&totalAmount=' +
-      projectData.totalCost +
-      '&projectId=' +
-      projectData._id +
-      '&isRemainingPayment=true';
+    navigate('/payment', {
+      state: {
+        isRemainingPayment: true,
+        service: projectData.projectTitle || projectData.serviceName || 'Project balance',
+        clientName: session?.user?.name || '',
+        clientEmail: session?.user?.email || '',
+        projectId: projectData.id,
+        remainingAmount: projectData.balanceDue,
+        originalTotal: projectData.totalCost,
+      },
+    });
+  };
 
-    window.location.href = payUrl || 'https://webport-5ru9.onrender.com/portal';
+  const handleDownloadInvoice = async () => {
+    if (!projectData?.invoiceNumber || invoiceDownloading) return;
+    setInvoiceDownloading(true);
+    setInvoiceError('');
+    try {
+      const response = await fetch(apiUrl(`/api/portal/projects/${encodeURIComponent(projectData.id)}/invoice`), {
+        headers: {
+          Accept: 'application/pdf',
+          ...(portalSession.getToken() ? { Authorization: `Bearer ${portalSession.getToken()}` } : {}),
+        },
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message || 'The invoice PDF is not available right now.');
+      }
+      const pdf = await response.blob();
+      if (!pdf.size || (pdf.type && pdf.type !== 'application/pdf')) {
+        throw new Error('The server returned an empty or invalid invoice file. Please contact support.');
+      }
+      const objectUrl = URL.createObjectURL(pdf);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `Invoice-${projectData.invoiceNumber}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (err) {
+      setInvoiceError(err.message || 'Could not download the invoice PDF.');
+    } finally {
+      setInvoiceDownloading(false);
+    }
   };
 
   const buttonClass =
@@ -232,12 +392,12 @@ function ClientPortal() {
           <div>
             <p className="eyebrow text-[var(--signal)]">Client portal</p>
             <h1 className="mt-2 font-display text-3xl leading-tight text-[var(--ink)]">
-              {projectData?.clientName || 'Your project file.'}
+              {session?.user?.name || 'Your project file.'}
             </h1>
             <p className="mt-1.5 max-w-md text-sm leading-6 text-[var(--ink-soft)]">
               {isLoggedIn
                 ? 'Signed in to your project dashboard.'
-                : 'Enter the email and access key sent to you after your payment was verified.'}
+                : 'Enter the email and password sent to you after your payment was verified.'}
             </p>
           </div>
           {isLoggedIn && (
@@ -283,18 +443,23 @@ function ClientPortal() {
                   />
                 </div>
                 <div>
-                  <label className={labelClass}>Access key</label>
+                  <label className={labelClass}>Password</label>
                   <input
                     type="password"
                     required
                     className={fieldClass}
-                    placeholder="Your access key"
-                    value={loginData.accessKey}
+                    placeholder="Your portal password"
+                    value={loginData.password}
                     onChange={(e) =>
-                      setLoginData({ ...loginData, accessKey: e.target.value })
+                      setLoginData({ ...loginData, password: e.target.value })
                     }
                   />
                 </div>
+                {notice && (
+                  <p className="rounded-lg border border-[var(--rule)] bg-[var(--paper-2)] px-4 py-3 text-sm leading-6 text-[var(--ink-soft)]">
+                    {notice}
+                  </p>
+                )}
                 {error && (
                   <p className="rounded-lg border border-red-800/30 bg-red-950/20 px-4 py-3 text-sm text-red-900">
                     {error}
@@ -317,7 +482,7 @@ function ClientPortal() {
                   onClick={() => setShowForgot(true)}
                   className="justify-center text-sm text-[var(--signal)] underline underline-offset-2 hover:opacity-80"
                 >
-                  Forgot your access key?
+                  Forgot your password?
                 </button>
 
                 <AnimatePresence>
@@ -331,14 +496,14 @@ function ClientPortal() {
                     >
                       <div className="border-t border-[var(--rule)] pt-6">
                         <p className="text-sm font-medium text-[var(--ink)]">
-                          Request a reset code
+                          Reset your password
                         </p>
                         <p className="mt-1 text-xs text-[var(--ink-soft)]">
-                          Enter the email on file. If that email is registered, a verification
-                          code will be sent to it.
+                          Enter the email on file. If that email is registered, we will send a
+                          secure single-use reset link that expires in 15 minutes.
                         </p>
 
-                        {!forgotMsg && !otpMsg && (
+                        {!forgotMsg && !resetToken && (
                           <div className="mt-4">
                             <div className="relative">
                               <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
@@ -372,7 +537,7 @@ function ClientPortal() {
                                 disabled={forgotLoading || !forgotEmail}
                                 className={`${buttonClass} flex-1`}
                               >
-                                {forgotLoading ? 'Sending…' : 'Send verification code'}
+                                {forgotLoading ? 'Sending…' : 'Send reset link'}
                               </button>
                               {forgotMsg && (
                                 <p className="flex-1 text-sm text-green-700">{forgotMsg}</p>
@@ -384,91 +549,71 @@ function ClientPortal() {
                           </div>
                         )}
 
-                        {forgotMsg && !otpMsg && (
+                        {forgotMsg && !resetToken && !resetMsg && (
                           <div className="mt-4 border-t border-[var(--rule)] pt-5">
-                            <p className="text-sm font-medium text-[var(--ink)]">
-                              Enter the code sent to {forgotEmail}
-                            </p>
-                            <p className="mt-1 text-xs text-[var(--ink-soft)]">
-                              Check your inbox for a 6-digit code. It is valid for 10 minutes.
-                            </p>
-                            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                              <label className="block">
-                                <span className={labelClass}>Verification code</span>
-                                <input
-                                  type="text"
-                                  inputMode="numeric"
-                                  maxLength={6}
-                                  required
-                                  className={fieldClass}
-                                  placeholder="000000"
-                                  value={otpCode}
-                                  onChange={(e) =>
-                                    setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))
-                                  }
-                                />
-                              </label>
-                              <label className="block">
-                                <span className={labelClass}>New access key</span>
-                                <input
-                                  type="password"
-                                  required
-                                  minLength={6}
-                                  className={fieldClass}
-                                  placeholder="At least 6 characters"
-                                  value={newKey}
-                                  onChange={(e) => setNewKey(e.target.value)}
-                                />
-                              </label>
-                            </div>
-                            <div className="mt-4 flex gap-3">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setForgotMsg('');
-                                  setOtpMsg('');
-                                  setForgotEmail('');
-                                  setForgotError('');
-                                  setOtpError('');
-                                  setOtpCode('');
-                                  setNewKey('');
-                                }}
-                                className={`${buttonClass} flex-1`}
-                              >
-                                Back
-                              </button>
-                              <button
-                                type="button"
-                                onClick={handleResetWithOtp}
-                                disabled={otpLoading || otpCode.length !== 6 || newKey.length < 6}
-                                className={`${buttonClass} flex-1`}
-                              >
-                                {otpLoading ? 'Saving…' : 'Save new access key'}
-                              </button>
-                            </div>
-                            {otpMsg && (
-                              <p className="mt-3 text-sm text-green-700">{otpMsg}</p>
-                            )}
-                            {otpError && (
-                              <p className="mt-3 text-sm text-red-700">{otpError}</p>
-                            )}
+                            <p className="text-sm text-green-700">{forgotMsg}</p>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setForgotMsg('');
+                                setForgotEmail('');
+                                setForgotError('');
+                              }}
+                              className={`${buttonClass} mt-4 w-full`}
+                            >
+                              Back
+                            </button>
                           </div>
                         )}
 
-                        {otpMsg && (
+                        {resetToken && !resetMsg && (
                           <div className="mt-4 border-t border-[var(--rule)] pt-5">
-                            <p className="text-sm text-green-700">{otpMsg}</p>
+                            <p className="text-sm font-medium text-[var(--ink)]">
+                              Choose a new password
+                            </p>
+                            <p className="mt-1 text-xs text-[var(--ink-soft)]">
+                              This secure link works once and expires 15 minutes after it was
+                              requested.
+                            </p>
+                            <label className="mt-4 block">
+                              <span className={labelClass}>New password</span>
+                              <input
+                                type="password"
+                                required
+                                minLength={8}
+                                className={fieldClass}
+                                placeholder="8+ chars, letters and numbers"
+                                value={resetKey}
+                                onChange={(e) => setResetKey(e.target.value)}
+                              />
+                            </label>
+                            {resetError && (
+                              <p className="mt-3 text-sm text-red-700">{resetError}</p>
+                            )}
+                            <button
+                              type="button"
+                              onClick={handleResetWithToken}
+                              disabled={resetLoading || resetKey.length < 8}
+                              className={`${buttonClass} mt-4 w-full`}
+                            >
+                              {resetLoading ? 'Saving…' : 'Save new password'}
+                            </button>
+                          </div>
+                        )}
+
+                        {resetMsg && (
+                          <div className="mt-4 border-t border-[var(--rule)] pt-5">
+                            <p className="text-sm text-green-700">{resetMsg}</p>
                             <button
                               type="button"
                               onClick={() => {
                                 setShowForgot(false);
                                 setForgotMsg('');
-                                setOtpMsg('');
                                 setForgotEmail('');
                                 setForgotError('');
-                                setOtpError('');
-                                setOtpCode('');
-                                setNewKey('');
+                                setResetMsg('');
+                                setResetKey('');
+                                setResetError('');
                               }}
                               className={`${buttonClass} mt-4 w-full`}
                             >
@@ -496,7 +641,66 @@ function ClientPortal() {
           )}
         </AnimatePresence>
 
-        {isLoggedIn && projectData && (
+        {isLoggedIn && mustChangePassword && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-2xl border border-[var(--rule)] bg-[var(--paper)] p-6 md:p-10"
+          >
+            <p className="eyebrow text-[var(--signal)]">First sign-in</p>
+            <h2 className="mt-2 font-display text-3xl leading-tight text-[var(--ink)]">
+              Set a permanent password.
+            </h2>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--ink-soft)]">
+              You signed in with the temporary password from your payment email. Choose a
+              password you will keep — at least 8 characters with a letter and a number.
+            </p>
+            <form onSubmit={handleSetPassword} className="mt-6 flex max-w-md flex-col gap-4">
+              <label className="block">
+                <span className={labelClass}>New password</span>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  className={fieldClass}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                />
+              </label>
+              <label className="block">
+                <span className={labelClass}>Confirm password</span>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  className={fieldClass}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                />
+              </label>
+              {passwordError && (
+                <p className="rounded-lg border border-red-800/30 bg-red-950/20 px-4 py-3 text-sm text-red-900">
+                  {passwordError}
+                </p>
+              )}
+              <button type="submit" disabled={passwordLoading} className={buttonClass}>
+                {passwordLoading ? 'Saving…' : 'Save password and open portal'}
+              </button>
+            </form>
+          </motion.div>
+        )}
+
+        {isLoggedIn && !mustChangePassword && !projectData && (
+          <div className="rounded-2xl border border-[var(--rule)] bg-[var(--paper)] p-6 md:p-10">
+            <p className="eyebrow text-[var(--ink-soft)]">No project on file</p>
+            <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
+              Your account is active but no project is attached yet.{' '}
+              {SUPPORT_EMAIL ? <>Write to <a className="underline" href={emailHref(SUPPORT_EMAIL)}>{SUPPORT_EMAIL}</a> and we will link it.</> : <>Use the <a className="underline" href="/contact">contact form</a> and we will link it.</>}
+            </p>
+          </div>
+        )}
+
+        {isLoggedIn && !mustChangePassword && projectData && (
           <AnimatePresence>
             <motion.div
               key="dashboard"
@@ -512,8 +716,29 @@ function ClientPortal() {
                     {projectData.projectTitle || 'Untitled project'}
                   </h2>
                   <p className="mt-2 text-sm text-[var(--ink-soft)]">
-                    Client: {projectData.clientName} ({projectData.clientEmail})
+                    Client: {projectData.clientName || session?.user?.name || '—'} ({session?.user?.email || 'on file'})
                   </p>
+                  {projectData.projectType && (
+                    <p className="mt-3 text-sm text-[var(--ink-soft)]">
+                      Project type <span className="ml-2 font-medium text-[var(--ink)]">{projectData.projectType}</span>
+                    </p>
+                  )}
+                  {Array.isArray(projectData.features) && projectData.features.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2" aria-label="Included project features">
+                      {projectData.features.map((feature) => (
+                        <span key={`${projectData.id}:${feature}`} className="rounded-full border border-[var(--rule)] bg-[var(--paper)] px-3 py-1 text-xs text-[var(--ink-soft)]">{feature}</span>
+                      ))}
+                    </div>
+                  )}
+                  {projectData.invoiceNumber && (
+                    <div className="mt-4">
+                      <button type="button" onClick={handleDownloadInvoice} disabled={invoiceDownloading} className={`${buttonClass} disabled:cursor-wait disabled:opacity-50`}>
+                        {invoiceDownloading ? 'Preparing invoice PDF…' : 'Download Invoice & SOW (PDF) ↓'}
+                      </button>
+                      <p className="mt-2 text-xs text-[var(--ink-soft)]">Invoice {projectData.invoiceNumber}</p>
+                      {invoiceError && <p role="alert" className="mt-2 text-sm text-red-700">{invoiceError}</p>}
+                    </div>
+                  )}
                 </div>
                 <div className="col-span-12 md:col-span-5">
                   <p className="eyebrow text-[var(--ink-soft)]">Status</p>
@@ -528,25 +753,25 @@ function ClientPortal() {
                       <div>
                         <dt className="text-[var(--ink-soft)]">Payment</dt>
                         <dd className="mt-1 font-medium text-[var(--ink)]">
-                          {projectData.paymentStatus || 'Not set'}
+                          {paymentStatusLabel(projectData.paymentStatus)}
                         </dd>
                       </div>
                       <div>
                         <dt className="text-[var(--ink-soft)]">Total cost</dt>
                         <dd className="mt-1 font-medium text-[var(--ink)]">
-                          ${projectData.totalCost || 0}
+                          {formatInr(projectData.totalCost)}
                         </dd>
                       </div>
                       <div>
                         <dt className="text-[var(--ink-soft)]">Paid</dt>
                         <dd className="mt-1 font-medium text-[var(--ink)]">
-                          ${projectData.amountPaid || 0}
+                          {formatInr(projectData.amountPaid)}
                         </dd>
                       </div>
                       <div>
                         <dt className="text-[var(--ink-soft)]">Balance due</dt>
                         <dd className="mt-1 font-medium text-[var(--ink)]">
-                          ${projectData.balanceDue || 0}
+                          {formatInr(projectData.balanceDue)}
                         </dd>
                       </div>
                       <div>
@@ -566,7 +791,7 @@ function ClientPortal() {
                           onClick={handlePayRemaining}
                           className={`${buttonClass} mt-4`}
                         >
-                          Pay remaining balance →
+                          Pay remaining balance 
                         </button>
                       </div>
                     )}
@@ -609,13 +834,13 @@ function ClientPortal() {
                           <div>
                             <dt className="text-[var(--ink-soft)]">Amount paid</dt>
                             <dd className="font-medium text-[var(--ink)]">
-                              ${projectData.amountPaid || 0}
+                              {formatInr(projectData.amountPaid)}
                             </dd>
                           </div>
                           <div>
                             <dt className="text-[var(--ink-soft)]">Balance</dt>
                             <dd className="font-medium text-[var(--ink)]">
-                              ${projectData.balanceDue || 0}
+                              {formatInr(projectData.balanceDue)}
                             </dd>
                           </div>
                         </dl>
@@ -677,13 +902,56 @@ function ClientPortal() {
               <section className="pb-10">
                 <div className="flex flex-wrap items-baseline justify-between gap-3">
                   <p className="eyebrow text-[var(--signal)]">Messages</p>
-                  <p className="eyebrow text-[var(--ink-soft)]">From the developer</p>
+                  <p className="eyebrow text-[var(--ink-soft)]">Project thread</p>
                 </div>
 
                 <p className="mt-4 max-w-3xl whitespace-pre-wrap text-lg leading-8 text-[var(--ink)]">
                   {projectData.notes ||
                     'No new updates right now. Working on your project!'}
                 </p>
+
+                <div className="mt-8 border-t border-[var(--rule)] pt-6">
+                  <p className="eyebrow text-[var(--ink-soft)]">Conversation</p>
+                  {messagesLoading && (
+                    <p className="mt-3 text-sm text-[var(--ink-soft)]">Loading messages…</p>
+                  )}
+                  {messagesError && (
+                    <p className="mt-3 text-sm text-red-700">{messagesError}</p>
+                  )}
+                  {!messagesLoading && !messagesError && messages.length === 0 && (
+                    <p className="mt-3 text-sm text-[var(--ink-soft)]">
+                      No messages yet. Send the first one below.
+                    </p>
+                  )}
+                  <ul className="mt-4 space-y-3">
+                    {messages.map((msg) => {
+                      const fromClient = msg.senderType === 'client';
+                      return (
+                        <li
+                          key={msg.id}
+                          className={`rounded-lg border border-[var(--rule)] p-4 ${fromClient ? 'bg-[var(--paper)]' : 'bg-[var(--paper-2)]'}`}
+                        >
+                          <div className="flex flex-wrap items-baseline justify-between gap-2">
+                            <p className="text-sm font-medium text-[var(--ink)]">
+                              {fromClient ? 'You' : msg.senderName || 'Shivam (developer)'}
+                            </p>
+                            <p className="font-mono-ui text-[10px] uppercase tracking-[0.12em] text-[var(--ink-soft)]">
+                              {new Date(msg.createdAt).toLocaleString()}
+                            </p>
+                          </div>
+                          {msg.subject && (
+                            <p className="mt-1 text-sm font-medium text-[var(--ink)]">
+                              {msg.subject}
+                            </p>
+                          )}
+                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--ink-soft)]">
+                            {msg.body}
+                          </p>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
 
                 <form
                   onSubmit={handleSendReply}
@@ -705,7 +973,7 @@ function ClientPortal() {
                     disabled={isSendingReply}
                     className={`${buttonClass} mt-4`}
                   >
-                    {isSendingReply ? 'Sending…' : 'Send message →'}
+                    {isSendingReply ? 'Sending…' : 'Send message '}
                   </button>
                 </form>
               </section>
@@ -739,7 +1007,7 @@ function ClientPortal() {
                 </button>
                 <p className="eyebrow text-[var(--signal)]">Session opened</p>
                 <h2 className="mt-2 font-display text-2xl leading-tight text-[var(--ink)]">
-                  Welcome back, {projectData?.clientName || 'there'}.
+                  Welcome back, {session?.user?.name || 'there'}.
                 </h2>
                 <p className="mt-3 text-sm leading-6 text-[var(--ink-soft)]">
                   You have{' '}
@@ -809,15 +1077,15 @@ function ClientPortal() {
                       Email on file
                     </p>
                     <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                      {projectData?.clientEmail || 'Not set'}
+                      {session?.user?.email || 'Not set'}
                     </p>
                   </div>
                   <div className="rounded-lg border border-[var(--rule)] bg-[var(--paper-2)] p-4">
                     <p className="text-sm font-medium text-[var(--ink)]">
-                      Access key
+                      Password
                     </p>
                     <p className="mt-1 text-sm text-[var(--ink-soft)]">
-                      This key signs you in to the portal.
+                      This password signs you in to the portal.
                     </p>
                     <button
                       type="button"
@@ -827,7 +1095,7 @@ function ClientPortal() {
                       }}
                       className={buttonClass}
                     >
-                      Change access key
+                      Change password
                     </button>
                   </div>
                   <div className="rounded-lg border border-[var(--rule)] bg-[var(--paper-2)] p-4">
@@ -841,6 +1109,19 @@ function ClientPortal() {
                       className="rounded-lg border border-red-800/40 bg-red-950/20 px-4 py-2 text-sm font-medium text-red-900 transition-colors hover:bg-red-950/40"
                     >
                       Sign out
+                    </button>
+                  </div>
+                  <div className="rounded-lg border border-[var(--rule)] bg-[var(--paper-2)] p-4">
+                    <p className="text-sm font-medium text-[var(--ink)]">Sign out of all devices</p>
+                    <p className="mt-1 text-sm text-[var(--ink-soft)]">
+                      Revokes every portal session tied to this account, on every device.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleLogoutAll}
+                      className="rounded-lg border border-red-800/40 bg-red-950/20 px-4 py-2 text-sm font-medium text-red-900 transition-colors hover:bg-red-950/40"
+                    >
+                      Sign out of all devices
                     </button>
                   </div>
                 </div>
@@ -875,64 +1156,54 @@ function ClientPortal() {
                 </button>
                 <p className="eyebrow text-[var(--ink-soft)]">Account</p>
                 <h2 className="mt-3 font-display text-3xl leading-tight text-[var(--ink)]">
-                  Change access key.
+                  Change password.
                 </h2>
                 <p className="mt-3 text-sm leading-6 text-[var(--ink-soft)]">
-                  Update the key used to sign in to this portal.
+                  Choose a new password for this portal. You will stay signed in.
                 </p>
                 <form
                   onSubmit={async (e) => {
                     e.preventDefault();
-                    const oldK = e.target.oldKey.value;
-                    const newK = e.target.newKey.value;
+                    const pass = e.target.newKey.value;
+                    const confirm = e.target.confirmKey.value;
+                    if (pass !== confirm) {
+                      alert('The two passwords do not match.');
+                      return;
+                    }
                     try {
-                      const res = await fetch(
-                        'https://webport-5ru9.onrender.com/api/client/change-password',
-                        {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            email: projectData.clientEmail,
-                            oldKey: oldK,
-                            newKey: newK,
-                          }),
-                        }
-                      );
-                      const data = await res.json();
-                      if (data.success) {
-                        alert('Access key updated successfully.');
-                        setShowPasswordModal(false);
-                      } else {
-                        alert(data.message);
-                      }
-                    } catch {
-                      alert('Server error');
+                      await portalApi.setPassword(pass);
+                      alert('Password updated successfully.');
+                      setShowPasswordModal(false);
+                    } catch (err) {
+                      alert(err.message || 'Server error');
                     }
                   }}
                   className="mt-6 flex flex-col gap-4"
                 >
                   <label className="block">
-                    <span className={labelClass}>Current key</span>
+                    <span className={labelClass}>New password</span>
                     <input
                       type="password"
-                      name="oldKey"
-                      placeholder="Current password"
+                      name="newKey"
+                      placeholder="At least 8 characters"
+                      minLength={8}
                       required
                       className={fieldClass}
                     />
                   </label>
                   <label className="block">
-                    <span className={labelClass}>New key</span>
+                    <span className={labelClass}>Confirm new password</span>
                     <input
                       type="password"
-                      name="newKey"
-                      placeholder="New password"
+                      name="confirmKey"
+                      placeholder="Repeat the password"
+                      minLength={8}
                       required
                       className={fieldClass}
                     />
                   </label>
                   <button type="submit" className={`${buttonClass} w-full`}>
-                    Update access key
+                    Update password
                   </button>
                 </form>
               </motion.div>

@@ -110,7 +110,7 @@ const Projects = () => {
 
                   <div className="col-span-4 flex justify-end md:col-span-3">
                     <span className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors group-hover:text-[var(--signal)]">
-                      Source ↗
+                      Source
                     </span>
                   </div>
                 </a>

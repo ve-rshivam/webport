@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Home hero — roles share one grid cell, so the line never jumps height */
+
 .role-stack {
   display: inline-grid;
   vertical-align: top;
@@ -28,15 +28,10 @@
   transition-delay: calc(var(--i) * 18ms);
 }
 
-/* Tailwind v4: `dark:` follows the .dark class on <html>, not the OS. */
+
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* -------------------------------------------------------------------------
-   Design tokens — "engineering notebook"
-   Warm paper, ink, a single vermilion signal color.
-   The --bg-* / --text-* / --accent aliases keep the pages that are not yet
-   migrated onto the new palette.
-   ------------------------------------------------------------------------- */
+
 :root,
 html.light {
   color-scheme: light;
@@ -101,6 +96,11 @@ html.dark {
     text-rendering: optimizeLegibility;
   }
 
+  select option {
+    background-color: var(--paper);
+    color: var(--ink);
+  }
+
   a {
     color: inherit;
     text-decoration: none;
@@ -131,12 +131,7 @@ html.dark {
   }
 }
 
-/* -------------------------------------------------------------------------
-   Legacy page normalisation
-   The remaining pages still use inline card styles. Flatten their surfaces
-   and use the editorial heading face until each page is rewritten.
-   Scoped to <main> so the header, footer and home page are untouched.
-   ------------------------------------------------------------------------- */
+
 main [style*="border-radius"] {
   border-radius: 0 !important;
 }

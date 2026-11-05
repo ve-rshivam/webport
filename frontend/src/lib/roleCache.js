@@ -22,6 +22,5 @@ export const writeCachedRoles = (roles) => {
     }
     localStorage.setItem(ROLES_CACHE_KEY, JSON.stringify(clean));
   } catch {
-    // storage can be unavailable; the API stays the source of truth
-  }
+      }
 };

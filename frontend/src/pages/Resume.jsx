@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { PageShell, buttonClass } from '../components/Editorial';
+import { CONTACT_EMAIL, CONTACT_PHONE, emailHref } from '../lib/contact';
 
 const Resume = () => {
   const [pinnedProjects, setPinnedProjects] = useState([]);
@@ -13,17 +14,13 @@ const Resume = () => {
   const githubUser = "ve-rshivam";
 
   useEffect(() => {
-    // 1. Fetch Pinned Projects (same as Home page — NOT all GitHub repos)
-    fetch(`https://webport-5ru9.onrender.com/api/pinned-projects`)
-      .then(res => res.json())
+        apiRequest('/api/pinned-projects')
       .then(data => {
         if (Array.isArray(data)) setPinnedProjects(data);
       })
-      .catch(err => console.error("Pinned Projects Fetch Error:", err));
+      .catch(err => console.error('Pinned Projects Fetch Error:', err));
 
-    // 2. Fetch Skills, Experience, Education from backend
-    fetch("https://webport-5ru9.onrender.com/api/resume-data")
-      .then(res => res.json())
+        apiRequest('/api/resume-data')
       .then(data => {
         setSkills(data.skills || []);
         setExperiences(data.experiences || []);
@@ -31,22 +28,17 @@ const Resume = () => {
         setLoading(false);
       })
       .catch(err => {
-        console.error("Backend Fetch Error:", err);
+        console.error('Backend Fetch Error:', err);
         setLoading(false);
-      });
-
-     
-    fetch("https://webport-5ru9.onrender.com/api/content")
-      .then(res => res.json())
+      });    apiRequest('/api/content')
       .then(data => {
         if (data?.homeData?.heroTitle) {
-           
           const title = data.homeData.heroTitle;
           const nameMatch = title.match(/I\s*(?:am|'m)\s+(.+)/i);
           setHomeContent({ heroTitle: nameMatch ? nameMatch[1].trim() : title });
         }
       })
-      .catch(err => console.log("Content fetch error", err));
+      .catch(err => console.log('Content fetch error', err));
   }, []);
 
   const handleDownloadPDF = () => {
@@ -234,7 +226,6 @@ const Resume = () => {
             color: #000 !important;
           }
 
-          /* Force proper section border visibility */
           #printable-resume .resume-section-title {
             border-bottom: 1.5px solid #000 !important;
           }
@@ -302,8 +293,8 @@ const Resume = () => {
             fontFamily: "'Times New Roman', 'Georgia', serif",
             lineHeight: '1.5',
           }}>
-            getus.shivam@gmail.com{' | '}
-            +91 81028 69061{' | '}
+            {CONTACT_EMAIL ? <><a href={emailHref(CONTACT_EMAIL)} style={{ color: '#333', textDecoration: 'none' }}>{CONTACT_EMAIL}</a>{' | '}</> : null}
+            {CONTACT_PHONE ? <>{CONTACT_PHONE}{' | '}</> : null}
             <a href={`https://github.com/${githubUser}`} style={{ color: '#333', textDecoration: 'none' }}>
               github.com/{githubUser}
             </a>{' | '}

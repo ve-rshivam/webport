@@ -3,67 +3,95 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation, useNavigate } from 'react-router-dom';
 import RefundRules from './RefundRules';
 import { PageShell, buttonClass } from '../components/Editorial';
-import { PayPalScriptProvider, PayPalButtons } from "@paypal/react-paypal-js"; 
+import { apiRequest, apiUrl } from '../lib/api';
+import { SUPPORT_EMAIL } from '../lib/contact';
+import { PayPalScriptProvider, PayPalButtons } from '@paypal/react-paypal-js';
+
+const INR_PER_USD = Number(import.meta.env.VITE_INR_PER_USD) || 88;
+
+const formatInr = (value) =>
+  `\u20b9${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+
+const inrToUsd = (value) => Math.max(0.01, Math.round((Number(value || 0) / INR_PER_USD) * 100) / 100);
+
+const formatUsd = (value) =>
+  `$${Number(value || 0).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 
 const Payment = () => {
-  const location = useLocation(); 
+  const location = useLocation();
   const navigate = useNavigate();
-  
-  
+
   const portalData = location.state || {};
   const preSelectedService = portalData.preSelectedService || '';
   const isRemainingPayment = portalData.isRemainingPayment || false;
 
- 
   const [step, setStep] = useState(isRemainingPayment ? 2 : 1);
-  const [verifyStatus, setVerifyStatus] = useState("");
-  const [servicesList, setServicesList] = useState([]); 
-  
-  
+  const [verifyStatus, setVerifyStatus] = useState('');
+  const [servicesList, setServicesList] = useState([]);
+
   const [paymentPercent, setPaymentPercent] = useState(100);
-  const [paymentStatusMessage, setPaymentStatusMessage] = useState(''); 
-  
- 
+  const [paymentStatusMessage, setPaymentStatusMessage] = useState('');
+  const [verificationPending, setVerificationPending] = useState(false);
+
   const [clientDetails, setClientDetails] = useState({
-    name: portalData.clientName || '', 
-    email: portalData.clientEmail || '', 
-    phone: portalData.clientPhone || '', 
+    name: portalData.clientName || '',
+    email: portalData.clientEmail || '',
+    phone: portalData.clientPhone || '',
     service: portalData.service || preSelectedService || 'Full-Stack Web Development',
-    projectId: portalData.projectId || null
+    projectId: portalData.projectId || null,
   });
 
-  
-  
+  const [isVerifySubmitting, setIsVerifySubmitting] = useState(false);
+
   useEffect(() => {
     const fetchServices = async () => {
       try {
-        const res = await fetch("https://webport-5ru9.onrender.com/api/services");
+        const res = await fetch(apiUrl('/api/services'));
         if (res.ok) {
           const data = await res.json();
           setServicesList(data);
-          
+
           if (data && data.length > 0 && !preSelectedService && !isRemainingPayment) {
-            setClientDetails(prev => ({ ...prev, service: data[0].title }));
+            setClientDetails((prev) => ({ ...prev, service: data[0].title }));
           }
         }
       } catch (err) {
-        console.error("Failed to load dynamic services", err);
+        console.error('Failed to load dynamic services', err);
       }
     };
     fetchServices();
   }, [preSelectedService, isRemainingPayment]);
 
- 
   const fieldClass =
     'w-full border border-[var(--rule)] bg-transparent px-3 py-2.5 text-sm text-[var(--ink)] outline-none transition-colors placeholder:text-[var(--ink-soft)] focus:border-[var(--signal)]';
 
-  const selectedSrvForMath = servicesList.find(s => s.title === clientDetails.service);
-  const baseTotal = selectedSrvForMath ? parseInt(selectedSrvForMath.price.replace(/\D/g, "") || "100", 10) : 100;
-  
- 
-  const totalAmount = isRemainingPayment ? portalData.remainingAmount : baseTotal;
-  const amountToPay = isRemainingPayment ? totalAmount : Math.round((totalAmount * paymentPercent) / 100);
-  const remainingAmount = isRemainingPayment ? 0 : (totalAmount - amountToPay);
+  const selectedSrvForMath = servicesList.find((s) => s.title === clientDetails.service);
+  const baseTotal = selectedSrvForMath
+    ? Number(String(selectedSrvForMath.price ?? '').replace(/[^0-9.]/g, '')) || 99
+    : 99;
+
+  const totalAmount = isRemainingPayment ? Number(portalData.remainingAmount || 0) : baseTotal;
+  const amountToPay = isRemainingPayment
+    ? Math.round(totalAmount)
+    : Math.round((totalAmount * paymentPercent) / 100);
+  const remainingAmount = isRemainingPayment
+    ? 0
+    : Math.max(totalAmount - amountToPay, 0);
+
+  const serviceUsdPrice =
+    Number(String(selectedSrvForMath?.priceUsd ?? '').replace(/[^0-9.]/g, '')) || 0;
+  const hasServiceUsdPrice = serviceUsdPrice > 0 && baseTotal > 0;
+  const toUsd = (inrAmount) =>
+    hasServiceUsdPrice
+      ? Math.max(0.01, Math.round(((inrAmount * serviceUsdPrice) / baseTotal) * 100) / 100)
+      : inrToUsd(inrAmount);
+  const amountToPayUsd = toUsd(amountToPay);
+  const remainingAmountUsd = hasServiceUsdPrice
+    ? Math.round(((remainingAmount * serviceUsdPrice) / baseTotal) * 100) / 100
+    : inrToUsd(remainingAmount);
 
   const handleProceedToPay = (e) => {
     e.preventDefault();
@@ -73,248 +101,280 @@ const Payment = () => {
     const clientPhone = clientDetails.phone.trim();
 
     if (!clientName || !clientEmail || !clientPhone) {
-      alert("Error: All fields in Step 1 are mandatory!");
+      alert('Error: All fields in Step 1 are mandatory!');
       return;
     }
-    if (!clientEmail.includes("@") || !clientEmail.includes(".")) {
-      alert("Error: Please enter a valid email address!");
+    if (!clientEmail.includes('@') || !clientEmail.includes('.')) {
+      alert('Error: Please enter a valid email address!');
       return;
     }
     if (clientPhone.length < 10) {
-      alert("Error: Please enter a valid 10-digit mobile number!");
+      alert('Error: Please enter a valid 10-digit mobile number!');
       return;
     }
 
     try {
-      fetch("https://webport-5ru9.onrender.com/api/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      fetch(apiUrl('/api/alerts/abandoned-checkout'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: clientName,
           email: clientEmail,
-          phone: clientPhone,
-          message: `Checkout initiated for: ${clientDetails.service} (payment pending)`,
-          type: 'contact'
-        })
+          serviceName: clientDetails.service,
+          amount: amountToPay,
+        }),
       });
     } catch {
-      console.log("Silent lead capture failed.");
+      console.log('Silent abandoned-checkout alert failed.');
     }
 
-    setClientDetails({ ...clientDetails, name: clientName, email: clientEmail, phone: clientPhone });
+    setClientDetails({
+      ...clientDetails,
+      name: clientName,
+      email: clientEmail,
+      phone: clientPhone,
+    });
     setStep(2);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const handleServiceChange = (service) => {
+    setClientDetails((current) => ({ ...current, service }));
+    setPaymentPercent(100);
+  };
+
+  const convertToBase64 = (file) =>
+    new Promise((resolve, reject) => {
+      const fileReader = new FileReader();
+      fileReader.readAsDataURL(file);
+      fileReader.onload = () => resolve(fileReader.result);
+      fileReader.onerror = reject;
+    });
+
   const handleVerifySubmit = async (e) => {
-    e.preventDefault(); 
-    setVerifyStatus("Processing data...");
-    
+    e.preventDefault();
+
     const formElement = e.target;
     const formData = new FormData(formElement);
     const imageFile = formData.get('attachment');
-    
-    const convertToBase64 = (file) => {
-      return new Promise((resolve, reject) => {
-        const fileReader = new FileReader();
-        fileReader.readAsDataURL(file);
-        fileReader.onload = () => resolve(fileReader.result);
-        fileReader.onerror = (error) => reject(error);
-      });
-    };
+    const transactionRef = String(formData.get('transaction_id') || '').trim();
 
-    let base64Image = "";
+    const clientName = String(clientDetails.name || '').trim();
+    const amount = Number(amountToPay);
+
+    if (!clientName.trim()) {
+      setVerifyStatus('Please enter the client name.');
+      return;
+    }
+    if (!transactionRef.trim()) {
+      setVerifyStatus('Please enter the transaction ID / UTR.');
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setVerifyStatus('Please enter an amount greater than 0.');
+      return;
+    }
+    if (isVerifySubmitting) return;
+    setIsVerifySubmitting(true);
+    setVerifyStatus('Reading your payment proof…');
+
+    let screenshotUrl;
     if (imageFile && imageFile.size > 0) {
-      if (imageFile.size > 5 * 1024 * 1024) { 
-        setVerifyStatus("Image size must be less than 5MB.");
-        return; 
+      if (imageFile.size > 3 * 1024 * 1024) {
+        setVerifyStatus('Screenshot must be smaller than 3MB.');
+        setIsVerifySubmitting(false);
+        return;
       }
       try {
-        base64Image = await convertToBase64(imageFile);
-        setVerifyStatus("Sending to server...");
+        screenshotUrl = await convertToBase64(imageFile);
       } catch {
-        setVerifyStatus("Error: Failed to read image file.");
+        setVerifyStatus('Could not read the screenshot. Try another image.');
+        setIsVerifySubmitting(false);
         return;
       }
     }
 
-    const dataForDB = {
-      name: clientDetails.name,
-      email: clientDetails.email,
-      phone: clientDetails.phone,
-      transaction_id: formData.get('transaction_id'),
-      message: `Service: ${clientDetails.service} | Transaction ID: ${formData.get('transaction_id')}`,
-      type: 'payment',
-      attachment: base64Image,
-      
-      projectId: clientDetails.projectId,
-      isRemainingPayment: isRemainingPayment,
-      amountPaid: amountToPay
-    };
-
     try {
-      const dbRes = await fetch("https://webport-5ru9.onrender.com/api/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(dataForDB)
+      await apiRequest('/api/qr/submit', {
+        method: 'POST',
+        body: {
+          clientName,
+          email: clientDetails.email,
+          amount,
+          transactionRef,
+          screenshotUrl,
+          notes: `Service: ${clientDetails.service}${
+            clientDetails.phone ? ` | Phone: ${clientDetails.phone}` : ''
+          }${isRemainingPayment ? ' | Remaining balance' : ''}`,
+          serviceName: clientDetails.service,
+          currency: 'INR',
+        },
       });
 
-      if (dbRes.ok) {
-        setVerifyStatus("Payment Proof Submitted & Admin Notified!");
-        formElement.reset(); 
-        setTimeout(() => {
-          if(isRemainingPayment) {
-            navigate('/portal');
-          } else {
-            setStep(1); 
-            setVerifyStatus("");
-            const firstService = servicesList.length > 0 ? servicesList[0].title : 'Full-Stack Web Development';
-            setClientDetails({name: '', email: '', phone: '', service: firstService});
-          }
-        }, 3000);
-      } else {
-        const errorText = await dbRes.text();
-        setVerifyStatus(`Server Rejected. Details: ${errorText}`);
-      }
-    } catch (dbErr) {
-      console.error("DB Fetch Error:", dbErr);
-      setVerifyStatus(`Network Error: Backend is completely offline.`);
+      setVerifyStatus(
+        'Payment proof submitted! We will verify within 1-2 hours and send your portal login credentials via email.'
+      );
+      formElement.reset();
+    } catch (err) {
+      setVerifyStatus(
+        err.message || 'The payment proof could not be submitted. Please try again.'
+      );
+    } finally {
+      setIsVerifySubmitting(false);
     }
   };
 
   const loadRazorpayScript = () => {
     return new Promise((resolve) => {
-      const script = document.createElement("script");
-      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
       script.onload = () => resolve(true);
       script.onerror = () => resolve(false);
       document.body.appendChild(script);
     });
   };
 
+  const waitForProvisioning = (message) => {
+    setVerificationPending(true);
+    setPaymentStatusMessage(message);
+    window.setTimeout(() => {
+      navigate('/portal', {
+        state: { email: clientDetails.email, paymentSubmitted: true },
+      });
+    }, 6000);
+  };
+
   const handleRazorpayPayment = async () => {
-    setPaymentStatusMessage("Initializing secure payment...");
-    
+    setPaymentStatusMessage('Initializing secure payment...');
+
     const isScriptLoaded = await loadRazorpayScript();
     if (!isScriptLoaded) {
-      setPaymentStatusMessage("Failed to load Razorpay. Check your internet connection or adblocker.");
+      setPaymentStatusMessage(
+        'Failed to load Razorpay. Check your internet connection or adblocker.'
+      );
       return;
     }
-    
-    const selectedSrv = servicesList.find(s => s.title === clientDetails.service);
-    
-    
+
+    const selectedSrv = servicesList.find((s) => s.title === clientDetails.service);
+
     const requestBody = {
-        amount: amountToPay,
-        totalAmount: totalAmount,
-        currency: "INR",
-        serviceName: clientDetails.service,
-        projectId: clientDetails.projectId,
-        isRemainingPayment: isRemainingPayment
+      amount: amountToPay,
+      totalAmount: totalAmount,
+      currency: 'INR',
+      serviceName: clientDetails.service,
+      projectId: clientDetails.projectId,
+      isRemainingPayment: isRemainingPayment,
+                  name: clientDetails.name,
+      email: clientDetails.email,
     };
-    
+
     if (selectedSrv && selectedSrv._id && !isRemainingPayment) {
-        requestBody.serviceId = selectedSrv._id;
+      requestBody.serviceId = selectedSrv._id;
     }
 
     try {
-      const orderRes = await fetch("https://webport-5ru9.onrender.com/api/payment/razorpay-order", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody) 
+      const orderRes = await fetch(apiUrl('/api/payment/razorpay-order'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
       });
       const orderData = await orderRes.json();
 
-      if (!orderData.success) { 
-        setPaymentStatusMessage("");
-        alert("Server error: " + (orderData.message || orderData.error)); 
-        return; 
+      if (!orderData.success) {
+        setPaymentStatusMessage('');
+        alert('Server error: ' + (orderData.message || orderData.error));
+        return;
       }
 
       const razorpayKey = import.meta.env.VITE_RAZORPAY_KEY_ID;
       if (!razorpayKey) {
-        alert("Frontend VITE_RAZORPAY_KEY_ID is missing in .env");
-        setPaymentStatusMessage("Payment setup incomplete.");
+        alert('Frontend VITE_RAZORPAY_KEY_ID is missing in .env');
+        setPaymentStatusMessage('Payment setup incomplete.');
         return;
       }
 
       const options = {
-        key: razorpayKey, 
+        key: razorpayKey,
         amount: orderData.order.amount,
-        currency: "INR",
-        name: "Shivam Portfolio",
-        description: isRemainingPayment ? `Remaining Balance: ${clientDetails.service}` : clientDetails.service,
-        order_id: orderData.order.id, 
+        currency: 'INR',
+        name: 'Shivam Portfolio',
+        description: isRemainingPayment
+          ? `Remaining Balance: ${clientDetails.service}`
+          : clientDetails.service,
+        order_id: orderData.order.id,
         handler: async function (response) {
-          setPaymentStatusMessage("Verifying transaction securely on server...");
+                                        setPaymentStatusMessage('Verifying your payment with Razorpay…');
+
           try {
-            const verifyRes = await fetch("https://webport-5ru9.onrender.com/api/payment/gateway-success", {
-              method: "POST", 
-              headers: { "Content-Type": "application/json" },
+            const verifyRes = await fetch(apiUrl('/api/payment/razorpay-verify'), {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                name: clientDetails.name, 
-                email: clientDetails.email,
-                serviceName: clientDetails.service, 
-                transactionId: response.razorpay_payment_id,
-                gateway: 'razorpay',
-                razorpay_order_id: response.razorpay_order_id,
-                razorpay_payment_id: response.razorpay_payment_id,
-                razorpay_signature: response.razorpay_signature,
-                amountPaid: amountToPay,
-                totalAmount: isRemainingPayment ? portalData.originalTotal : totalAmount,
-                projectId: clientDetails.projectId,
-                isRemainingPayment: isRemainingPayment
-              })
+                razorpay_order_id: response?.razorpay_order_id,
+                razorpay_payment_id: response?.razorpay_payment_id,
+                razorpay_signature: response?.razorpay_signature,
+              }),
             });
-            const backendData = await verifyRes.json();
-            
-            if(backendData.success) {
-              setPaymentStatusMessage("Payment Verified!");
-              if (isRemainingPayment) {
-                alert("Remaining Dues Cleared! Project updated to 100% Paid.");
-                navigate('/portal');
-              } else {
-                alert(`Payment Success! Your Portal Access Key is: ${backendData.accessKey}`);
-                navigate('/portal');
-              }
-            } else {
-              setPaymentStatusMessage(`Verification failed: ${backendData.message}`);
+            const data = await verifyRes.json().catch(() => ({}));
+
+            if (!verifyRes.ok || !data.success) {
+              setPaymentStatusMessage(
+                data.message ||
+                  `Payment received, but it could not be confirmed automatically. Contact support${SUPPORT_EMAIL ? ` at ${SUPPORT_EMAIL}` : ''} with your payment ID so we can provision your portal access.`
+              );
+              return;
             }
-          } catch(verifyErr) {
-            console.error("Verification Error:", verifyErr);
-            setPaymentStatusMessage("Failed to verify with server.");
+
+            waitForProvisioning(
+              data.emailSent
+                ? `Payment verified. Your portal login has been emailed to ${data.userEmail || clientDetails.email}.`
+                : `Payment verified for ${data.userEmail || clientDetails.email}. The credentials email could not be sent — write to support${SUPPORT_EMAIL ? ` at ${SUPPORT_EMAIL}` : ''} and we will send your login manually.`
+            );
+          } catch (err) {
+            setPaymentStatusMessage(
+              `Payment received, but confirmation failed (${err.message}). Contact support${SUPPORT_EMAIL ? ` at ${SUPPORT_EMAIL}` : ''} with your payment ID.`
+            );
           }
         },
-        prefill: { name: clientDetails.name, email: clientDetails.email, contact: clientDetails.phone },
-        theme: { color: "#3399cc" },
+        prefill: {
+          name: clientDetails.name,
+          email: clientDetails.email,
+          contact: clientDetails.phone,
+        },
+        theme: { color: '#3399cc' },
         config: {
           display: {
             blocks: {
-              upi: { name: "Pay via UPI", instruments: [{ method: "upi" }] },
-              card: { name: "Pay via Card", instruments: [{ method: "card" }] }
+              upi: { name: 'Pay via UPI', instruments: [{ method: 'upi' }] },
+              card: { name: 'Pay via Card', instruments: [{ method: 'card' }] },
             },
-            sequence: ["block.upi", "block.card"],
-            preferences: { show_default_blocks: true }
-          }
-        }
+            sequence: ['block.upi', 'block.card'],
+            preferences: { show_default_blocks: true },
+          },
+        },
       };
 
+      if (typeof window.Razorpay !== 'function') {
+        setPaymentStatusMessage('Razorpay checkout unavailable.');
+        return;
+      }
+
       const rzp = new window.Razorpay(options);
-      
+
       rzp.on('payment.failed', function (response) {
-        console.error("Payment Failed:", response.error);
-        alert("Payment failed: " + response.error.description);
-        setPaymentStatusMessage("");
+        console.error('Payment Failed:', response.error);
+        setVerificationPending(false);
+        alert('Payment failed: ' + response.error.description);
+        setPaymentStatusMessage('');
       });
 
       rzp.open();
-      
     } catch (err) {
-      console.error("🔥 Frontend Razorpay Error:", err);
+      console.error('🔥 Frontend Razorpay Error:', err);
       setPaymentStatusMessage(`Error: ${err.message}`);
     }
   };
- 
+
   return (
     <PageShell>
       <header className="border-b border-[var(--rule)] pb-8 pt-8 md:pb-10 md:pt-12">
@@ -347,73 +407,101 @@ const Payment = () => {
           >
             <p className="eyebrow text-[var(--ink-soft)]">01 — Project requirements</p>
 
-            <form onSubmit={handleProceedToPay} className="mt-8 grid grid-cols-12 gap-6">
+            <form
+              onSubmit={handleProceedToPay}
+              className="mt-8 grid grid-cols-12 gap-6"
+            >
               <label className="col-span-12 block md:col-span-6">
-                <span className="eyebrow mb-2 block text-[var(--ink-soft)]">Full name</span>
+                <span className="eyebrow mb-2 block text-[var(--ink-soft)]">
+                  Full name
+                </span>
                 <input
                   type="text"
                   required
                   className={fieldClass}
                   value={clientDetails.name}
-                  onChange={(e) => setClientDetails({ ...clientDetails, name: e.target.value })}
+                  onChange={(e) =>
+                    setClientDetails({ ...clientDetails, name: e.target.value })
+                  }
                   placeholder="Your name"
                 />
               </label>
 
               <label className="col-span-12 block md:col-span-6">
-                <span className="eyebrow mb-2 block text-[var(--ink-soft)]">Email address</span>
+                <span className="eyebrow mb-2 block text-[var(--ink-soft)]">
+                  Email address
+                </span>
                 <input
                   type="email"
                   required
                   className={fieldClass}
                   value={clientDetails.email}
-                  onChange={(e) => setClientDetails({ ...clientDetails, email: e.target.value })}
+                  onChange={(e) =>
+                    setClientDetails({ ...clientDetails, email: e.target.value })
+                  }
                   placeholder="you@example.com"
                 />
               </label>
 
               <label className="col-span-12 block md:col-span-6">
-                <span className="eyebrow mb-2 block text-[var(--ink-soft)]">Mobile number</span>
+                <span className="eyebrow mb-2 block text-[var(--ink-soft)]">
+                  Mobile number
+                </span>
                 <input
                   type="tel"
                   required
                   className={fieldClass}
                   value={clientDetails.phone}
-                  onChange={(e) => setClientDetails({ ...clientDetails, phone: e.target.value })}
+                  onChange={(e) =>
+                    setClientDetails({ ...clientDetails, phone: e.target.value })
+                  }
                   placeholder="+91 00000 00000"
                 />
               </label>
 
               <label className="col-span-12 block md:col-span-6">
-                <span className="eyebrow mb-2 block text-[var(--ink-soft)]">Type of service</span>
+                <span className="eyebrow mb-2 block text-[var(--ink-soft)]">
+                  Type of service
+                </span>
                 <select
                   required
-                  className={`${fieldClass} cursor-pointer`}
+                  className={`${fieldClass} cursor-pointer [&>option]:bg-[var(--paper)] [&>option]:text-[var(--ink)]`}
                   value={clientDetails.service}
-                  onChange={(e) => setClientDetails({ ...clientDetails, service: e.target.value })}
+                  onChange={(e) => handleServiceChange(e.target.value)}
                 >
                   {servicesList.length > 0 ? (
                     servicesList.map((srv) => (
-                      <option key={srv._id} value={srv.title}>
-                        {srv.title}
+                      <option
+                        key={srv._id || srv.id || srv.title}
+                        value={srv.title}
+                        className="bg-[var(--paper)] py-2 text-[var(--ink)]"
+                      >
+                        {srv.title} — {formatInr(Number(String(srv.price ?? '').replace(/[^0-9.]/g, '')) || 99)}
                       </option>
                     ))
                   ) : (
                     <>
-                      <option value="Full-Stack Web Development">Full-Stack Web Development</option>
-                      <option value="AI/ML Integration">AI/ML Integration</option>
+                      <option value="Full-Stack Web Development" className="bg-[var(--paper)] text-[var(--ink)]">
+                        Full-Stack Web Development — {formatInr(99)}
+                      </option>
+                      <option value="AI/ML Integration" className="bg-[var(--paper)] text-[var(--ink)]">AI/ML Integration — {formatInr(99)}</option>
                     </>
                   )}
-                  {preSelectedService && !servicesList.some((s) => s.title === preSelectedService) && (
-                    <option value={preSelectedService}>{preSelectedService}</option>
-                  )}
-                  <option value="Other Custom Service">Other Custom Service</option>
+                  {preSelectedService &&
+                    !servicesList.some((s) => s.title === preSelectedService) && (
+                      <option value={preSelectedService} className="bg-[var(--paper)] text-[var(--ink)]">
+                        {preSelectedService} — {formatInr(99)}
+                      </option>
+                    )}
+                  <option value="Other Custom Service" className="bg-[var(--paper)] text-[var(--ink)]">
+                    Other Custom Service — {formatInr(99)}
+                  </option>
                 </select>
               </label>
 
               <div className="col-span-12 mt-2">
                 <button type="submit" className={buttonClass}>
-                  Continue to payment →
+                  Continue to payment 
                 </button>
               </div>
             </form>
@@ -438,6 +526,33 @@ const Payment = () => {
               </button>
             )}
 
+            {verificationPending && (
+              <div className="mt-6 border border-[var(--rule)] bg-[var(--paper-2)] p-6">
+                <p className="eyebrow text-[var(--signal)]">Payment received</p>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--ink)]">
+                  {paymentStatusMessage}
+                </p>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--ink-soft)]">
+                  We verify the payment on the server and email your portal password to{' '}
+                  <strong className="font-medium text-[var(--ink)]">
+                    {clientDetails.email || 'your address'}
+                  </strong>
+                  . You will be taken to the portal sign-in shortly.
+                </p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigate('/portal', {
+                      state: { email: clientDetails.email, paymentSubmitted: true },
+                    })
+                  }
+                  className={`${buttonClass} mt-4`}
+                >
+                  Go to portal sign-in
+                </button>
+              </div>
+            )}
+
             <div className="mt-8 grid grid-cols-12 gap-x-10 gap-y-12">
               <div className="col-span-12 lg:col-span-7">
                 <p className="eyebrow text-[var(--ink-soft)]">02 — Amount</p>
@@ -452,17 +567,17 @@ const Payment = () => {
                         You are clearing the remaining balance on this project.
                       </p>
                       <p className="mt-4 font-display text-[clamp(2.4rem,6vw,4rem)] leading-none text-[var(--signal)]">
-                        ₹{amountToPay}
+                        {formatInr(amountToPay)}
                       </p>
                     </>
                   ) : (
                     <>
                       <div className="flex flex-wrap items-baseline justify-between gap-3">
                         <p className="font-display text-[clamp(2.4rem,6vw,4rem)] leading-none text-[var(--signal)]">
-                          ₹{amountToPay}
+                          {formatInr(amountToPay)}
                         </p>
                         <p className="font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
-                          {paymentPercent}% of ₹{totalAmount}
+                          {paymentPercent}% of {formatInr(totalAmount)}
                         </p>
                       </div>
 
@@ -486,13 +601,15 @@ const Payment = () => {
                         <span className="text-[var(--ink-soft)]">
                           Remaining after this payment
                         </span>
-                        <strong className="font-medium text-[var(--ink)]">₹{remainingAmount}</strong>
+                        <strong className="font-medium text-[var(--ink)]">
+                          {formatInr(remainingAmount)}
+                        </strong>
                       </div>
                     </>
                   )}
                 </div>
 
-                {paymentStatusMessage && (
+                {paymentStatusMessage && !verificationPending && (
                   <p className="mt-6 border-l-2 border-[var(--signal)] pl-3 text-sm leading-6 text-[var(--signal)]">
                     {paymentStatusMessage}
                   </p>
@@ -517,7 +634,7 @@ const Payment = () => {
                         href={`upi://pay?pa=paytmqr6ex9gc@ptys&pn=SHIVAM%20KUMAR&cu=INR&am=${amountToPay}`}
                         className="mt-4 inline-flex items-center gap-2 border-b border-[var(--ink)] pb-1 text-sm font-medium text-[var(--ink)] transition-colors hover:border-[var(--signal)] hover:text-[var(--signal)]"
                       >
-                        Pay via UPI app ↗
+                        Pay via UPI app
                       </a>
                     </div>
                   </div>
@@ -532,9 +649,10 @@ const Payment = () => {
                     <button
                       type="button"
                       onClick={handleRazorpayPayment}
-                      className={`${buttonClass} mt-4 w-full`}
+                      disabled={verificationPending}
+                      className={`${buttonClass} mt-4 w-full disabled:cursor-not-allowed disabled:opacity-60`}
                     >
-                      Pay with Razorpay
+                      {verificationPending ? 'Verifying payment…' : 'Pay with Razorpay'}
                     </button>
                   </div>
 
@@ -542,6 +660,19 @@ const Payment = () => {
                     <p className="eyebrow text-[var(--ink-soft)]">International</p>
                     <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
                       Pay in USD through PayPal.
+                    </p>
+                    <p className="mt-3 font-mono-ui text-base tracking-[0.04em] text-[var(--ink)]">
+                      {formatUsd(amountToPayUsd)} USD
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-[var(--ink-soft)]">
+                      {hasServiceUsdPrice
+                        ? `Listed at $${formatUsd(serviceUsdPrice)} USD · ${formatInr(amountToPay)} equivalent`
+                        : `${formatInr(amountToPay)} at 1 USD = ${INR_PER_USD} INR`}
+                      {!isRemainingPayment && (
+                        <>
+                          {' '}· {formatUsd(remainingAmountUsd)} USD remains after this payment
+                        </>
+                      )}
                     </p>
                     <div className="mt-4">
                       <PayPalScriptProvider
@@ -553,55 +684,49 @@ const Payment = () => {
                         <PayPalButtons
                           style={{ layout: 'horizontal', height: 40 }}
                           createOrder={(data, actions) => {
+                            const paypalService = servicesList.find((service) => service.title === clientDetails.service);
                             return actions.order.create({
                               application_context: { shipping_preference: 'NO_SHIPPING' },
                               purchase_units: [
                                 {
                                   description: clientDetails.service,
-                                  amount: { value: amountToPay.toString() },
+                                  custom_id: JSON.stringify({
+                                    s: isRemainingPayment ? '' : paypalService?._id || '',
+                                    r: isRemainingPayment ? 1 : 0,
+                                    p: isRemainingPayment ? clientDetails.projectId || '' : '',
+                                    n: paypalService ? '' : clientDetails.service === 'Other Custom Service' ? 'Other Custom Service' : '',
+                                  }),
+                                  amount: {
+                                    currency_code: 'USD',
+                                    value: amountToPayUsd.toFixed(2),
+                                  },
                                 },
                               ],
                             });
                           }}
-                          onApprove={async (data, actions) => {
-                            setPaymentStatusMessage('Verifying PayPal transaction on server...');
+                          onApprove={async (data) => {
+                            setPaymentStatusMessage('Verifying and capturing your PayPal payment…');
                             try {
-                              const details = await actions.order.capture();
-                              const res = await fetch(
-                                'https://webport-5ru9.onrender.com/api/payment/gateway-success',
-                                {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({
-                                    name: clientDetails.name,
-                                    email: clientDetails.email,
-                                    serviceName: clientDetails.service,
-                                    transactionId: details.id,
-                                    gateway: 'paypal',
-                                    amountPaid: amountToPay,
-                                    totalAmount: isRemainingPayment
-                                      ? portalData.originalTotal
-                                      : totalAmount,
-                                    projectId: clientDetails.projectId,
-                                    isRemainingPayment: isRemainingPayment,
-                                  }),
-                                }
+                              await apiRequest('/api/payment/paypal-verify', {
+                                method: 'POST',
+                                body: {
+                                  orderID: data.orderID,
+                                  serviceId: selectedSrvForMath?._id ?? null,
+                                  projectId: clientDetails.projectId ?? portalData.projectId ?? null,
+                                  serviceName: clientDetails.service,
+                                  name: clientDetails.name,
+                                  email: clientDetails.email,
+                                  isRemainingPayment,
+                                },
+                              });
+                                                                                          waitForProvisioning(
+                                'Payment received. Verifying and preparing your portal access…'
                               );
-                              const backendData = await res.json();
-                              if (backendData.success) {
-                                setPaymentStatusMessage('Payment verified.');
-                                if (isRemainingPayment) {
-                                  alert('Remaining dues cleared. Project updated to 100% paid.');
-                                  navigate('/portal');
-                                } else {
-                                  alert(
-                                    `Payment success. Your portal access key is: ${backendData.accessKey}`
-                                  );
-                                  setTimeout(() => navigate('/portal'), 2000);
-                                }
-                              }
                             } catch {
-                              setPaymentStatusMessage('Payment capture failed on server.');
+                              setVerificationPending(false);
+                              setPaymentStatusMessage(
+                                'PayPal capture failed. No charge was completed.'
+                              );
                             }
                           }}
                         />
@@ -622,7 +747,41 @@ const Payment = () => {
                     issued.
                   </p>
 
-                  <form onSubmit={handleVerifySubmit} className="mt-5 flex flex-col gap-4">
+                  <form
+                    onSubmit={handleVerifySubmit}
+                    className="mt-5 flex flex-col gap-4"
+                  >
+                    <label className="block">
+                      <span className="eyebrow mb-2 block text-[var(--ink-soft)]">
+                        Client name
+                      </span>
+                      <input
+                        type="text"
+                        name="client_name"
+                        value={clientDetails.name}
+                        onChange={(e) => setClientDetails((current) => ({ ...current, name: e.target.value }))}
+                        placeholder="e.g. Raghav Sharma"
+                        required
+                        className={fieldClass}
+                      />
+                    </label>
+
+                    <label className="block">
+                      <span className="eyebrow mb-2 block text-[var(--ink-soft)]">
+                        Amount to pay (INR)
+                      </span>
+                      <input
+                        type="number"
+                        name="amount"
+                        min={amountToPay}
+                        step="0.01"
+                        value={amountToPay}
+                        readOnly
+                        required
+                        className={`${fieldClass} cursor-not-allowed opacity-85`}
+                      />
+                    </label>
+
                     <label className="block">
                       <span className="eyebrow mb-2 block text-[var(--ink-soft)]">
                         Transaction ID / UTR
@@ -638,7 +797,7 @@ const Payment = () => {
 
                     <label className="block">
                       <span className="eyebrow mb-2 block text-[var(--ink-soft)]">
-                        Screenshot — JPG or PNG, max 5MB
+                        Screenshot — JPG or PNG, max 3MB
                       </span>
                       <input
                         type="file"
@@ -649,8 +808,12 @@ const Payment = () => {
                       />
                     </label>
 
-                    <button type="submit" className={`${buttonClass} w-full`}>
-                      Submit details ↗
+                    <button
+                      type="submit"
+                      disabled={isVerifySubmitting}
+                      className={`${buttonClass} w-full disabled:cursor-not-allowed disabled:opacity-60`}
+                    >
+                      {isVerifySubmitting ? 'Submitting…' : 'Submit details'}
                     </button>
 
                     {verifyStatus && (

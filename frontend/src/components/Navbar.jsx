@@ -65,7 +65,7 @@ const Navbar = () => {
             to="/contact"
             className="hidden items-center gap-2 border border-[var(--ink)] px-3 py-2 font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)] md:inline-flex"
           >
-            Contact <span aria-hidden="true">↗</span>
+            Contact <span aria-hidden="true"></span>
           </Link>
 
           <button
@@ -121,7 +121,7 @@ const Navbar = () => {
                   onClick={() => setIsMenuOpen(false)}
                   className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--signal)]"
                 >
-                  Contact ↗
+                  Contact 
                 </Link>
                 <Link
                   to="/portal"

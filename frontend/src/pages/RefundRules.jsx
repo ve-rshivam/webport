@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiGet } from '../lib/api';
+import { SUPPORT_EMAIL, emailHref } from '../lib/contact';
 
 const RefundRules = () => {
   const [refundText, setRefundText] = useState(null);
@@ -45,14 +46,12 @@ const RefundRules = () => {
           payment processing fees (approximately 5%).
         </p>
         <p className="mt-3">
-          To request a cancellation in that window, email{' '}
-          <a
-            href="mailto:support.shivam@gmail.com?subject=Refund%20Request"
-            className="border-b border-[var(--signal)] text-[var(--signal)] transition-opacity hover:opacity-70"
-          >
-            support.shivam@gmail.com
-          </a>
-          .
+          To request a cancellation in that window,{' '}
+          {SUPPORT_EMAIL ? (
+            <>email <a href={emailHref(SUPPORT_EMAIL, 'Refund Request')} className="border-b border-[var(--signal)] text-[var(--signal)] transition-opacity hover:opacity-70">{SUPPORT_EMAIL}</a>.</>
+          ) : (
+            <>use the <a href="/contact" className="border-b border-[var(--signal)] text-[var(--signal)]">contact form</a>.</>
+          )}
         </p>
       </section>
 

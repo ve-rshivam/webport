@@ -35,7 +35,7 @@ export const ArrowLink = ({ to, href, children, className = '' }) => {
   const classes = `group inline-flex items-center gap-3 border-b border-[var(--ink)] pb-1 text-sm font-medium text-[var(--ink)] transition-colors hover:border-[var(--signal)] hover:text-[var(--signal)] ${className}`;
   const arrow = (
     <span aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">
-      {href ? '↗' : '→'}
+      
     </span>
   );
 

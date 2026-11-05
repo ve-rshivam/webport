@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion, useMotionValue, useTransform } from 'framer-motion';
+import { apiRequest } from '../lib/api';
 import RefundRules from './RefundRules'; 
 
 const Legal = () => {
@@ -9,8 +10,7 @@ const Legal = () => {
 
   
   useEffect(() => {
-    fetch("https://webport-5ru9.onrender.com/api/content")
-      .then(res => res.json())
+    apiRequest('/api/content')
       .then(data => {
         if (data && data.policyData) {
           setPolicyData({
@@ -19,7 +19,7 @@ const Legal = () => {
           });
         }
       })
-      .catch(err => console.error("Failed to fetch legal content:", err));
+      .catch(err => console.error('Failed to fetch legal content:', err));
   }, []);
 
   useEffect(() => {

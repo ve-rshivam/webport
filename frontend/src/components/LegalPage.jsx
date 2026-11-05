@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { apiGet } from '../lib/api';
+import { SUPPORT_EMAIL, emailHref } from '../lib/contact';
 import { ArrowLink, PageIntro, PageShell } from './Editorial';
 
 const LegalPage = ({ index, label, title, intro, policyKey, children }) => {
@@ -29,6 +31,17 @@ const LegalPage = ({ index, label, title, intro, policyKey, children }) => {
           )}
         </div>
       </section>
+
+      <div className="border-t border-[var(--rule)] py-8">
+        <p className="text-sm leading-7 text-[var(--ink-soft)]">
+          Questions, requests or concerns about this policy?{' '}
+          {SUPPORT_EMAIL ? (
+            <>Write to <a href={emailHref(SUPPORT_EMAIL)} className="text-[var(--ink)] underline decoration-[var(--rule)] underline-offset-4 transition-colors hover:text-[var(--signal)]">{SUPPORT_EMAIL}</a>.</>
+          ) : (
+            <>Use the <Link to="/contact" className="underline">contact form</Link>.</>
+          )}
+        </p>
+      </div>
 
       <div className="flex flex-wrap items-center gap-x-8 gap-y-4 border-t border-[var(--rule)] py-10">
         <ArrowLink to="/contact">Questions about this policy</ArrowLink>

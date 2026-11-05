@@ -26,8 +26,7 @@ const RoleRotator = ({ roles, reduceMotion }) => {
   const count = roles.length;
   const activeIndex = count > 0 ? active % count : 0;
 
-  // A short delay lets the hidden state paint before the first role transitions in.
-  useEffect(() => {
+    useEffect(() => {
     const timer = setTimeout(() => {
       setStarted(true);
       setVisible(true);
@@ -193,7 +192,7 @@ const Home = () => {
 
   return (
     <article className="mx-auto w-full max-w-[1440px] px-6 md:px-10">
-      {/* 01 — Masthead */}
+      { }
       <section className="border-b border-[var(--rule)] pb-12 pt-8 md:pb-16 md:pt-12">
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)]">
           <span>Portfolio — 2026</span>
@@ -233,19 +232,13 @@ const Home = () => {
                 className="group inline-flex items-center gap-3 border-b border-[var(--ink)] pb-1 text-sm font-medium text-[var(--ink)] transition-colors hover:border-[var(--signal)] hover:text-[var(--signal)]"
               >
                 Start a project
-                <span
-                  aria-hidden="true"
-                  className="transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5"
-                >
-                  ↗
-                </span>
               </Link>
 
               <Link
                 to="/resume"
                 className="inline-flex items-center gap-2 font-mono-ui text-[11px] uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors hover:text-[var(--signal)]"
               >
-                Read resume <span aria-hidden="true">→</span>
+                Read resume <span aria-hidden="true"></span>
               </Link>
             </div>
           </motion.div>
@@ -308,7 +301,7 @@ const Home = () => {
         </div>
       </section>
 
-      {/* 02 — Selected work */}
+      { }
       <section className="border-b border-[var(--rule)] py-16 md:py-24">
         <div className="flex flex-wrap items-baseline justify-between gap-4">
           <p className="eyebrow text-[var(--signal)]">02 — Selected work</p>
@@ -384,7 +377,7 @@ const Home = () => {
 
                   <div className="col-span-4 flex justify-end md:col-span-3">
                     <span className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors group-hover:text-[var(--signal)]">
-                      {href ? 'Visit ↗' : '—'}
+                      {href ? 'Visit' : '—'}
                     </span>
                   </div>
                 </Row>
@@ -397,12 +390,12 @@ const Home = () => {
             to="/projects"
             className="inline-flex items-center gap-3 border-b border-[var(--ink)] pb-1 text-sm font-medium transition-colors hover:border-[var(--signal)] hover:text-[var(--signal)]"
           >
-            All projects <span aria-hidden="true">→</span>
+            All projects <span aria-hidden="true"></span>
           </Link>
         </div>
       </section>
 
-      {/* 03 — About */}
+      { }
       <section className="border-b border-[var(--rule)] py-16 md:py-24">
         <div className="grid grid-cols-12 gap-x-8 gap-y-10">
           <div className="col-span-12 md:col-span-4">
@@ -446,7 +439,7 @@ const Home = () => {
         </div>
       </section>
 
-      {/* 04 — Contact */}
+      { }
       <section className="py-16 md:py-24">
         <div className="grid grid-cols-12 gap-x-8 gap-y-8">
           <div className="col-span-12 md:col-span-4">
@@ -475,7 +468,7 @@ const Home = () => {
                   aria-hidden="true"
                   className="transition-transform group-hover:translate-x-0.5"
                 >
-                  →
+                  
                 </span>
               </Link>
 
