@@ -2768,93 +2768,253 @@ const Admin = () => {
           </motion.div>
         )}
 
-        {selectedQrForApproval && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4" role="presentation">
-            <section
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="project-config-title"
-              className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-[var(--rule)] bg-[var(--paper)] p-5 text-[var(--ink)] shadow-2xl sm:p-8"
-            >
-              <div className="mb-6 flex items-start justify-between gap-4 border-b border-[var(--rule)] pb-5">
-                <div>
-                  <h2 id="project-config-title" className="font-display text-2xl">Configure Project &amp; Scope</h2>
-                  <p className="mt-2 text-sm text-[var(--ink-soft)]">
-                    {selectedQrForApproval.clientName || 'Client'} · {selectedQrForApproval.email} · {selectedQrForApproval.currency} {Number(selectedQrForApproval.amount || 0).toLocaleString('en-IN')}
-                  </p>
-                </div>
-                <button type="button" onClick={() => setSelectedQrForApproval(null)} disabled={projectApprovalLoading} aria-label="Close project scope dialog" className="rounded border border-[var(--rule)] px-3 py-2 text-sm text-[var(--ink-soft)] transition-colors hover:border-[var(--signal)] hover:text-[var(--signal)] disabled:opacity-50">Close</button>
-              </div>
+        {selectedQrForApproval && (() => {
+          const isRemainingSubmission = Boolean(
+            selectedQrForApproval?.isRemainingPayment ||
+            selectedQrForApproval?.projectId ||
+            /remaining balance/i.test(String(selectedQrForApproval?.notes || ''))
+          );
 
-              <form onSubmit={submitProjectApproval} className="space-y-6">
-                <div className="grid gap-5 sm:grid-cols-2">
-                  <label className="block text-sm font-medium">
-                    Project type
-                    <select autoFocus required value={projectApprovalForm.projectType} onChange={(event) => setProjectApprovalForm({ ...projectApprovalForm, projectType: event.target.value })} className={`${inputClass} mt-2 bg-[var(--paper)]`}>
-                      {PROJECT_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
-                    </select>
-                  </label>
-                  <label className="block text-sm font-medium">
-                    Estimated days to build
-                    <input type="number" required min="1" max="730" step="1" value={projectApprovalForm.estimatedDays} onChange={(event) => setProjectApprovalForm({ ...projectApprovalForm, estimatedDays: event.target.value })} className={`${inputClass} mt-2`} />
-                    <span className="mt-2 block text-xs text-[var(--ink-soft)]">Target completion: {targetCompletionDate(projectApprovalForm.estimatedDays)}</span>
-                  </label>
-                </div>
-
-                <fieldset className="border-t border-[var(--rule)] pt-5">
-                  <legend className="px-1 text-sm font-semibold">Included features &amp; modules</legend>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    {PROJECT_FEATURES.map((feature) => (
-                      <label key={feature} className="flex cursor-pointer items-start gap-2 rounded-lg border border-[var(--rule)] px-3 py-2.5 text-sm transition-colors hover:border-[var(--signal)]">
-                        <input type="checkbox" checked={projectApprovalForm.features.includes(feature)} onChange={() => toggleApprovalFeature(feature)} className="mt-1 accent-[var(--signal)]" />
-                        <span>{feature}</span>
-                      </label>
-                    ))}
+          return (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm" role="presentation">
+              <section
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="project-config-title"
+                className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-[var(--rule)] bg-[var(--paper)] p-5 text-[var(--ink)] shadow-2xl sm:p-8"
+              >
+                <div className="mb-6 flex items-start justify-between gap-4 border-b border-[var(--rule)] pb-5">
+                  <div>
+                    <span className={`inline-block px-2.5 py-0.5 rounded text-[11px] font-mono-ui font-bold uppercase tracking-wider mb-2 ${
+                      isRemainingSubmission 
+                        ? 'bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-500/30' 
+                        : 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30'
+                    }`}>
+                      {isRemainingSubmission ? 'Remaining Balance Payment' : 'New Project Onboarding'}
+                    </span>
+                    <h2 id="project-config-title" className="font-display text-2xl">
+                      {isRemainingSubmission ? 'Verify & Clear Project Balance' : 'Configure Project & Scope'}
+                    </h2>
+                    <p className="mt-1 text-sm text-[var(--ink-soft)]">
+                      {selectedQrForApproval.clientName || 'Client'} · {selectedQrForApproval.email}
+                    </p>
                   </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {projectApprovalForm.features.filter((feature) => !PROJECT_FEATURES.includes(feature)).map((feature) => (
-                      <span key={feature} className="inline-flex items-center gap-2 rounded-full border border-[var(--signal)]/50 bg-[var(--signal)]/10 px-3 py-1 text-xs">
-                        {feature}
-                        <button type="button" onClick={() => toggleApprovalFeature(feature)} aria-label={`Remove ${feature}`} className="font-bold text-[var(--signal)]">×</button>
-                      </span>
-                    ))}
-                  </div>
-                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                    <input type="text" value={projectApprovalForm.customFeature} onChange={(event) => setProjectApprovalForm({ ...projectApprovalForm, customFeature: event.target.value })} onKeyDown={(event) => { if (event.key === 'Enter') addCustomProjectFeature(event); }} placeholder="Add a custom feature module" className={inputClass} />
-                    <button type="button" onClick={addCustomProjectFeature} className="shrink-0 rounded border border-[var(--rule)] px-4 py-2 text-sm transition-colors hover:border-[var(--signal)] hover:text-[var(--signal)]">Add module</button>
-                  </div>
-                </fieldset>
-
-                <fieldset className="border-t border-[var(--rule)] pt-5">
-                  <legend className="px-1 text-sm font-semibold">Financial sanity check</legend>
-                  <div className="mt-3 grid gap-5 sm:grid-cols-3">
-                    <label className="block text-sm font-medium">
-                      Total valuation ({selectedQrForApproval.currency || 'INR'})
-                      <input type="number" required min="0.01" step="0.01" value={projectApprovalForm.totalCost} onChange={(event) => setProjectApprovalForm({ ...projectApprovalForm, totalCost: event.target.value })} className={`${inputClass} mt-2`} />
-                    </label>
-                    <label className="block text-sm font-medium">
-                      Advance paid ({selectedQrForApproval.currency || 'INR'})
-                      <input type="number" required min="0" step="0.01" value={projectApprovalForm.amountPaid} onChange={(event) => setProjectApprovalForm({ ...projectApprovalForm, amountPaid: event.target.value })} className={`${inputClass} mt-2`} />
-                    </label>
-                    <label className="block text-sm font-medium">
-                      Transaction reference / UTR
-                      <input type="text" value={projectApprovalForm.transactionRef} onChange={(event) => setProjectApprovalForm({ ...projectApprovalForm, transactionRef: event.target.value })} className={`${inputClass} mt-2`} />
-                    </label>
-                  </div>
-                  {Number(projectApprovalForm.amountPaid) > Number(projectApprovalForm.totalCost) && <p className="mt-3 text-sm text-red-700">Advance paid cannot exceed the total valuation.</p>}
-                  <p className="mt-3 text-xs text-[var(--ink-soft)]">The advance must match the amount on this verified payment proof.</p>
-                </fieldset>
-
-                <div className="flex flex-wrap justify-end gap-3 border-t border-[var(--rule)] pt-5">
-                  <button type="button" onClick={() => setSelectedQrForApproval(null)} disabled={projectApprovalLoading} className="rounded border border-[var(--rule)] px-4 py-2.5 text-sm transition-colors hover:border-[var(--ink)] disabled:opacity-50">Cancel</button>
-                  <button type="submit" disabled={projectApprovalLoading || !Number.isInteger(Number(projectApprovalForm.estimatedDays)) || Number(projectApprovalForm.amountPaid) > Number(projectApprovalForm.totalCost)} className={`${buttonClass} disabled:cursor-wait disabled:opacity-50`}>
-                    {projectApprovalLoading ? 'Approving & generating PDF…' : <>Approve Project &amp; Email Invoice <svg aria-hidden="true" viewBox="0 0 16 16" className="ml-2 h-3.5 w-3.5" fill="none"><path d="M4 12 12 4M5 4h7v7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></>}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedQrForApproval(null)}
+                    disabled={projectApprovalLoading}
+                    aria-label="Close dialog"
+                    className="rounded border border-[var(--rule)] px-3 py-1.5 text-xs text-[var(--ink-soft)] transition-colors hover:border-[var(--signal)] hover:text-[var(--signal)] disabled:opacity-50"
+                  >
+                    Close ✕
                   </button>
                 </div>
-              </form>
-            </section>
-          </div>
-        )}
+
+                <form onSubmit={submitProjectApproval} className="space-y-6">
+                  {isRemainingSubmission ? (
+                    <div className="space-y-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xl">💳</span>
+                        <p className="text-sm font-medium text-[var(--ink)]">
+                          Clearing balance on an existing active project. Modules and timeline will remain untouched.
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
+                        <div className="rounded-lg bg-[var(--paper-2)] p-4 border border-[var(--rule)]">
+                          <span className="text-xs text-[var(--ink-soft)] block uppercase tracking-wider font-mono-ui">
+                            Verified Payment Amount
+                          </span>
+                          <span className="text-2xl font-display font-bold text-emerald-600 dark:text-emerald-400 mt-1 block">
+                            ₹{Number(selectedQrForApproval.amount || 0).toLocaleString('en-IN')}
+                          </span>
+                        </div>
+                        <div className="rounded-lg bg-[var(--paper-2)] p-4 border border-[var(--rule)]">
+                          <label className="text-xs text-[var(--ink-soft)] block uppercase tracking-wider font-mono-ui">
+                            Transaction Ref / UTR
+                          </label>
+                          <input
+                            type="text"
+                            value={projectApprovalForm.transactionRef}
+                            onChange={(e) => setProjectApprovalForm({ ...projectApprovalForm, transactionRef: e.target.value })}
+                            placeholder="UTR / Bank Ref"
+                            className="w-full bg-transparent font-mono text-sm text-[var(--signal)] outline-none mt-1.5 font-bold"
+                          />
+                        </div>
+                      </div>
+
+                      {selectedQrForApproval.notes && (
+                        <div className="rounded-lg bg-[var(--paper)] p-3 border border-[var(--rule)] text-xs text-[var(--ink-soft)]">
+                          <strong className="text-[var(--ink)]">Client notes:</strong> {selectedQrForApproval.notes}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="grid gap-5 sm:grid-cols-2">
+                        <label className="block text-sm font-medium">
+                          Project type
+                          <select
+                            autoFocus
+                            required
+                            value={projectApprovalForm.projectType}
+                            onChange={(event) => setProjectApprovalForm({ ...projectApprovalForm, projectType: event.target.value })}
+                            className={`${inputClass} mt-2 bg-[var(--paper)]`}
+                          >
+                            {PROJECT_TYPES.map((type) => (
+                              <option key={type} value={type}>{type}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="block text-sm font-medium">
+                          Estimated days to build
+                          <input
+                            type="number"
+                            required
+                            min="1"
+                            max="730"
+                            step="1"
+                            value={projectApprovalForm.estimatedDays}
+                            onChange={(event) => setProjectApprovalForm({ ...projectApprovalForm, estimatedDays: event.target.value })}
+                            className={`${inputClass} mt-2`}
+                          />
+                          <span className="mt-2 block text-xs text-[var(--ink-soft)]">
+                            Target completion: {targetCompletionDate(projectApprovalForm.estimatedDays)}
+                          </span>
+                        </label>
+                      </div>
+
+                      <fieldset className="border-t border-[var(--rule)] pt-5">
+                        <legend className="px-1 text-sm font-semibold">Included features &amp; modules</legend>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                          {PROJECT_FEATURES.map((feature) => (
+                            <label
+                              key={feature}
+                              className="flex cursor-pointer items-start gap-2 rounded-lg border border-[var(--rule)] px-3 py-2.5 text-sm transition-colors hover:border-[var(--signal)]"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={projectApprovalForm.features.includes(feature)}
+                                onChange={() => toggleApprovalFeature(feature)}
+                                className="mt-1 accent-[var(--signal)]"
+                              />
+                              <span>{feature}</span>
+                            </label>
+                          ))}
+                        </div>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          {projectApprovalForm.features
+                            .filter((feature) => !PROJECT_FEATURES.includes(feature))
+                            .map((feature) => (
+                              <span
+                                key={feature}
+                                className="inline-flex items-center gap-2 rounded-full border border-[var(--signal)]/50 bg-[var(--signal)]/10 px-3 py-1 text-xs"
+                              >
+                                {feature}
+                                <button
+                                  type="button"
+                                  onClick={() => toggleApprovalFeature(feature)}
+                                  aria-label={`Remove ${feature}`}
+                                  className="font-bold text-[var(--signal)]"
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ))}
+                        </div>
+                        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                          <input
+                            type="text"
+                            value={projectApprovalForm.customFeature}
+                            onChange={(event) => setProjectApprovalForm({ ...projectApprovalForm, customFeature: event.target.value })}
+                            onKeyDown={(event) => { if (event.key === 'Enter') addCustomProjectFeature(event); }}
+                            placeholder="Add a custom feature module"
+                            className={inputClass}
+                          />
+                          <button
+                            type="button"
+                            onClick={addCustomProjectFeature}
+                            className="shrink-0 rounded border border-[var(--rule)] px-4 py-2 text-sm transition-colors hover:border-[var(--signal)] hover:text-[var(--signal)]"
+                          >
+                            Add module
+                          </button>
+                        </div>
+                      </fieldset>
+
+                      <fieldset className="border-t border-[var(--rule)] pt-5">
+                        <legend className="px-1 text-sm font-semibold">Financial sanity check</legend>
+                        <div className="mt-3 grid gap-5 sm:grid-cols-3">
+                          <label className="block text-sm font-medium">
+                            Total valuation ({selectedQrForApproval.currency || 'INR'})
+                            <input
+                              type="number"
+                              required
+                              min="0.01"
+                              step="0.01"
+                              value={projectApprovalForm.totalCost}
+                              onChange={(event) => setProjectApprovalForm({ ...projectApprovalForm, totalCost: event.target.value })}
+                              className={`${inputClass} mt-2`}
+                            />
+                          </label>
+                          <label className="block text-sm font-medium">
+                            Advance paid ({selectedQrForApproval.currency || 'INR'})
+                            <input
+                              type="number"
+                              required
+                              min="0"
+                              step="0.01"
+                              value={projectApprovalForm.amountPaid}
+                              onChange={(event) => setProjectApprovalForm({ ...projectApprovalForm, amountPaid: event.target.value })}
+                              className={`${inputClass} mt-2`}
+                            />
+                          </label>
+                          <label className="block text-sm font-medium">
+                            Transaction reference / UTR
+                            <input
+                              type="text"
+                              value={projectApprovalForm.transactionRef}
+                              onChange={(event) => setProjectApprovalForm({ ...projectApprovalForm, transactionRef: event.target.value })}
+                              className={`${inputClass} mt-2`}
+                            />
+                          </label>
+                        </div>
+                        {Number(projectApprovalForm.amountPaid) > Number(projectApprovalForm.totalCost) && (
+                          <p className="mt-3 text-sm text-red-700">Advance paid cannot exceed the total valuation.</p>
+                        )}
+                      </fieldset>
+                    </>
+                  )}
+
+                  <div className="flex flex-wrap justify-end gap-3 border-t border-[var(--rule)] pt-5">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedQrForApproval(null)}
+                      disabled={projectApprovalLoading}
+                      className="rounded border border-[var(--rule)] px-4 py-2.5 text-sm transition-colors hover:border-[var(--ink)] disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={
+                        projectApprovalLoading ||
+                        (!isRemainingSubmission && (!Number.isInteger(Number(projectApprovalForm.estimatedDays)) ||
+                        Number(projectApprovalForm.amountPaid) > Number(projectApprovalForm.totalCost)))
+                      }
+                      className={`${buttonClass} disabled:cursor-wait disabled:opacity-50`}
+                    >
+                      {projectApprovalLoading
+                        ? 'Processing…'
+                        : isRemainingSubmission
+                          ? 'Verify & Apply Remaining Balance ✓'
+                          : <>Approve Project &amp; Email Invoice <svg aria-hidden="true" viewBox="0 0 16 16" className="ml-2 h-3.5 w-3.5" fill="none"><path d="M4 12 12 4M5 4h7v7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></>}
+                    </button>
+                  </div>
+                </form>
+              </section>
+            </div>
+          );
+        })()}
 
       </div>
 

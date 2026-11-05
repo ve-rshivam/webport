@@ -49,7 +49,12 @@ function requirePermission(req, permission) {
   throw new ValidationError(`This operation requires the ${permission} permission.`, 403);
 }
 
-export function createInvoiceAdminRouter({ verifyAdminToken, checkPerm }) {
+export function createInvoiceAdminRouter({
+  verifyAdminToken,
+  checkPerm,
+  disconnectClientSockets = () => {},
+  syncClientProjectCredentials = async () => {},
+}) {
   const router = express.Router();
   const requireProjectAndPaymentPermissions = (req, res, next) => {
     if (req.admin.role === 'superadmin') return next();
@@ -64,35 +69,26 @@ export function createInvoiceAdminRouter({ verifyAdminToken, checkPerm }) {
   router.post('/:id/approve-and-invoice', verifyAdminToken, requireProjectAndPaymentPermissions, async (req, res) => {
     try {
       const body = requireJsonBody(req);
-      const projectType = validateRequiredString(body.projectType, 'projectType', 1, 120);
-      const estimatedDays = Number(body.estimatedDays);
-      if (!Number.isInteger(estimatedDays) || estimatedDays < 1 || estimatedDays > 730) {
-        throw new ValidationError('estimatedDays must be a whole number between 1 and 730.');
-      }
-      if (!Array.isArray(body.features) || body.features.length > 60) {
-        throw new ValidationError('features must be a list with no more than 60 items.');
-      }
-      const features = [...new Set(body.features.map((feature) => validateRequiredString(feature, 'feature', 1, 160)))];
-      const totalCost = validateNonNegativeNumber(body.totalCost, 'totalCost');
-      const amountPaid = validateNonNegativeNumber(body.amountPaid, 'amountPaid');
-      if (totalCost <= 0) throw new ValidationError('totalCost must be greater than zero.');
-      if (amountPaid > totalCost) throw new ValidationError('Advance paid cannot exceed the total project valuation.');
+      const safeDisconnect = typeof disconnectClientSockets === 'function' ? disconnectClientSockets : () => {};
+      const safeSync = typeof syncClientProjectCredentials === 'function' ? syncClientProjectCredentials : async () => {};
 
-      let project = null;
       let qrAlert = await prisma.adminAlert.findFirst({
         where: { id: req.params.id, type: 'qr_submission' },
       });
       let qrDetails = qrAlert?.details && typeof qrAlert.details === 'object' ? qrAlert.details : {};
-      let provisioningResult = null;
-      let transactionRef = typeof body.transactionRef === 'string' ? body.transactionRef.trim().slice(0, 160) : '';
 
       const isRemainingQr = Boolean(
         qrAlert && (
           qrDetails.isRemainingPayment ||
           qrDetails.projectId ||
+          body.isRemainingPayment ||
           /remaining balance/i.test(String(qrDetails.notes ?? ''))
         )
       );
+
+      let project = null;
+      let provisioningResult = null;
+      let transactionRef = typeof body.transactionRef === 'string' ? body.transactionRef.trim().slice(0, 160) : '';
 
       if (qrAlert) {
         requirePermission(req, 'client_access');
@@ -100,21 +96,17 @@ export function createInvoiceAdminRouter({ verifyAdminToken, checkPerm }) {
         if (qrDetails.status === 'rejected') throw new ValidationError('This payment proof was rejected.', 409);
 
         const proofAmount = Number(qrDetails.amount ?? 0);
-        const isRemainingQr = Boolean(
-          qrDetails.isRemainingPayment ||
-          qrDetails.projectId ||
-          /remaining balance/i.test(String(qrDetails.notes ?? ''))
-        );
+        const amountPaid = validateNonNegativeNumber(body.amountPaid ?? proofAmount, 'amountPaid');
+        const totalCost = isRemainingQr
+          ? 0 // remaining ke case me existing valuation retain hoti hai
+          : validateNonNegativeNumber(body.totalCost, 'totalCost');
 
-        if (!isRemainingQr && Math.abs(amountPaid - proofAmount) > 0.01) {
-          throw new ValidationError('Advance paid must match the amount on the verified payment proof.');
+        if (!isRemainingQr && totalCost <= 0) {
+          throw new ValidationError('totalCost must be greater than zero for new projects.');
         }
 
         const fallbackTx = String(qrDetails.transactionRef || qrDetails.transactionId || qrAlert.id || Date.now());
-        transactionRef = (typeof body.transactionRef === 'string' && body.transactionRef.trim())
-          ? body.transactionRef.trim().slice(0, 160)
-          : fallbackTx.slice(0, 160);
-
+        transactionRef ||= fallbackTx.slice(0, 160);
         const email = validateEmail(qrDetails.email ?? qrAlert.userEmail, 'client email');
 
         provisioningResult = await provisionFromPayment({
@@ -122,15 +114,18 @@ export function createInvoiceAdminRouter({ verifyAdminToken, checkPerm }) {
           transactionId: transactionRef,
           amount: proofAmount,
           projectAmount: proofAmount,
-          totalAmount: totalCost,
+          totalAmount: isRemainingQr ? 0 : totalCost,
           currency: qrDetails.currency ?? 'INR',
           email,
           name: qrDetails.clientName ?? qrDetails.name ?? qrAlert.userName,
-          serviceName: qrDetails.serviceName ?? projectType,
-          projectId: qrDetails.projectId ?? null,
+          serviceName: qrDetails.serviceName ?? body.projectType ?? 'Project Service',
+          projectId: qrDetails.projectId ?? body.projectId ?? null,
           isRemainingPayment: isRemainingQr,
           details: { gateway: 'qr', submissionId: qrAlert.id, isRemainingPayment: isRemainingQr },
-        }, { disconnectClientSockets, syncClientProjectCredentials });
+        }, {
+          disconnectClientSockets: safeDisconnect,
+          syncClientProjectCredentials: safeSync,
+        });
 
         project = provisioningResult.project;
         if (!project && provisioningResult.payment?.projectId) {
@@ -142,61 +137,66 @@ export function createInvoiceAdminRouter({ verifyAdminToken, checkPerm }) {
             orderBy: { createdAt: 'desc' },
           });
         }
-
-        if (!project) {
-          throw new ValidationError('The payment proof could not be linked to a project.', 409);
-        }
+        if (!project) throw new ValidationError('The payment proof could not be linked to a project.', 409);
       } else {
         project = await prisma.clientProject.findUnique({ where: { id: req.params.id } });
         if (!project) throw new ValidationError('Project or pending payment proof not found.', 404);
-        if (project.invoiceNumber) throw new ValidationError('An invoice has already been issued for this project.', 409);
         transactionRef ||= project.transactionRef ?? '';
       }
 
-      const deliveryDate = new Date(Date.now() + estimatedDays * 24 * 60 * 60 * 1000);
-      const deliveryDateParts = new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'Asia/Kolkata',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      }).formatToParts(deliveryDate).reduce((parts, item) => ({ ...parts, [item.type]: item.value }), {});
-      const deliveryDateText = `${deliveryDateParts.year}-${deliveryDateParts.month}-${deliveryDateParts.day}`;
-      const invoiceIssuedAt = new Date();
-      const finalTotalCost = isRemainingQr ? project.totalCost : totalCost;
-      const finalAmountPaid = isRemainingQr ? project.amountPaid : amountPaid;
-      const finalBalanceDue = Math.max(finalTotalCost - finalAmountPaid, 0);
-
+      // Remaining Payment handling (Sirf progress/notes/invoice update karega, parameters overwrite nahi karega)
       let updatedProject;
-      let invoiceNumber;
-      for (let attempt = 0; attempt < 5; attempt += 1) {
-        invoiceNumber = project.invoiceNumber || makeInvoiceNumber();
-        try {
-          updatedProject = await prisma.clientProject.update({
-            where: { id: project.id },
-            data: {
-              projectType: isRemainingQr ? (project.projectType || projectType) : projectType,
-              estimatedDays: isRemainingQr ? (project.estimatedDays || estimatedDays) : estimatedDays,
-              features: isRemainingQr && project.features?.length ? project.features : features,
-              deliveryDate: isRemainingQr ? (project.deliveryDate || deliveryDateText) : deliveryDateText,
-              status: 'Approved & In Progress',
-              totalCost: finalTotalCost,
-              amountPaid: finalAmountPaid,
-              balanceDue: finalBalanceDue,
-              paymentStatus: paymentStatusFor(finalTotalCost, finalAmountPaid),
-              transactionRef: transactionRef || null,
-              invoiceNumber,
-              invoiceIssuedAt,
-            },
-          });
-          break;
-        } catch (err) {
-          if (err?.code !== 'P2002' || attempt === 4) throw err;
+      let invoiceNumber = project.invoiceNumber || makeInvoiceNumber();
+      const invoiceIssuedAt = new Date();
+
+      if (isRemainingQr) {
+        updatedProject = await prisma.clientProject.update({
+          where: { id: project.id },
+          data: {
+            transactionRef: transactionRef || project.transactionRef,
+            invoiceNumber,
+            invoiceIssuedAt,
+            lastUpdated: new Date(),
+          },
+        });
+      } else {
+        const projectType = validateRequiredString(body.projectType, 'projectType', 1, 120);
+        const estimatedDays = Number(body.estimatedDays);
+        if (!Number.isInteger(estimatedDays) || estimatedDays < 1 || estimatedDays > 730) {
+          throw new ValidationError('estimatedDays must be a whole number between 1 and 730.');
         }
+        const features = Array.isArray(body.features)
+          ? [...new Set(body.features.map((f) => validateRequiredString(f, 'feature', 1, 160)))]
+          : [];
+        const totalCost = validateNonNegativeNumber(body.totalCost, 'totalCost');
+        const amountPaid = validateNonNegativeNumber(body.amountPaid, 'amountPaid');
+
+        const deliveryDate = new Date(Date.now() + estimatedDays * 24 * 60 * 60 * 1000);
+        const deliveryDateText = `${deliveryDate.getFullYear()}-${String(deliveryDate.getMonth() + 1).padStart(2, '0')}-${String(deliveryDate.getDate()).padStart(2, '0')}`;
+
+        updatedProject = await prisma.clientProject.update({
+          where: { id: project.id },
+          data: {
+            projectType,
+            estimatedDays,
+            features,
+            deliveryDate: deliveryDateText,
+            status: 'Approved & In Progress',
+            totalCost,
+            amountPaid,
+            balanceDue: Math.max(totalCost - amountPaid, 0),
+            paymentStatus: paymentStatusFor(totalCost, amountPaid),
+            transactionRef: transactionRef || null,
+            invoiceNumber,
+            invoiceIssuedAt,
+            lastUpdated: new Date(),
+          },
+        });
       }
 
-      if (!updatedProject) throw new Error('Could not reserve a unique invoice number.');
       emitProjectMutation(req, 'updated', updatedProject, { source: 'portal' });
 
+      // Invoice PDF Generation
       const invoiceData = {
         invoiceNumber,
         invoiceDate: invoiceIssuedAt,
@@ -205,48 +205,39 @@ export function createInvoiceAdminRouter({ verifyAdminToken, checkPerm }) {
         clientEmail: updatedProject.clientEmail,
         transactionRef,
         projectTitle: updatedProject.projectTitle,
-        projectType,
-        estimatedDays,
-        deliveryDate,
-        features,
-        totalCost,
-        amountPaid,
-        currency: updatedProject.currency,
+        projectType: updatedProject.projectType || 'Custom Project',
+        estimatedDays: updatedProject.estimatedDays || 14,
+        deliveryDate: updatedProject.deliveryDate || new Date(),
+        features: updatedProject.features || [],
+        totalCost: updatedProject.totalCost,
+        amountPaid: updatedProject.amountPaid,
+        currency: updatedProject.currency || 'INR',
       };
-      const pdfBuffer = await generateInvoicePDF(invoiceData);
-      if (!Buffer.isBuffer(pdfBuffer) || pdfBuffer.length === 0) {
-        throw new Error('Invoice PDF generation returned an empty document.');
+
+      let pdfBuffer = null;
+      try {
+        pdfBuffer = await generateInvoicePDF(invoiceData);
+      } catch (pdfErr) {
+        console.warn('Invoice PDF generation skipped/failed:', pdfErr?.message);
       }
 
-      const title = updatedProject.projectTitle || updatedProject.serviceName || projectType;
       const portalLink = portalUrl('/portal');
-      const featureList = features.length
-        ? `<ul>${features.map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')}</ul>`
-        : '<p>No additional feature modules were selected.</p>';
-      const html = `<div style="font-family:Arial,Helvetica,sans-serif;line-height:1.6;color:#17140f;max-width:620px;margin:auto">
-        <p style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#c93d1b">Shivam Web Studio · rshivam.dev</p>
-        <h1 style="font-family:Georgia,serif;font-weight:400">Your project is approved</h1>
-        <p>Hello ${escapeHtml(updatedProject.clientName || 'there')},</p>
-        <p><strong>${escapeHtml(title)}</strong> has been approved and scoped. Your invoice and Scope of Work are attached as a PDF.</p>
-        <h2 style="font-size:16px">Milestone recap</h2>
-        <p>Project type: ${escapeHtml(projectType)}<br>Estimated timeline: ${estimatedDays} Business Days<br>Target completion: ${escapeHtml(deliveryDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }))}<br>Invoice: ${escapeHtml(invoiceNumber)}</p>
-        <h2 style="font-size:16px">Included modules</h2>${featureList}
-        <p>Advance recorded: ${escapeHtml(updatedProject.currency)} ${amountPaid.toLocaleString('en-IN')}<br>Balance due at handover: ${escapeHtml(updatedProject.currency)} ${Math.max(totalCost - amountPaid, 0).toLocaleString('en-IN')}</p>
-        <p>Your portal is available at <a href="${escapeHtml(portalLink)}">${escapeHtml(portalLink)}</a>. Sign in with the portal credentials sent separately to this email address.</p>
-        <p style="font-size:12px;color:#71695d">Delivery estimates may shift if required content, access, or feedback is delayed. Scope changes require written approval.</p>
-      </div>`;
-      const text = `Hello ${updatedProject.clientName || 'there'},\n\n${title} has been approved and scoped. Your invoice and Scope of Work are attached as a PDF.\n\nProject type: ${projectType}\nEstimated timeline: ${estimatedDays} Business Days\nTarget completion: ${deliveryDate.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' })}\nInvoice: ${invoiceNumber}\nIncluded modules: ${features.join(', ') || 'None selected'}\nAdvance recorded: ${updatedProject.currency} ${amountPaid.toLocaleString('en-IN')}\nBalance due at handover: ${updatedProject.currency} ${Math.max(totalCost - amountPaid, 0).toLocaleString('en-IN')}\n\nClient portal: ${portalLink}\nSign in with the portal credentials sent separately.`;
+      const emailSubject = isRemainingQr
+        ? `Payment Verified & Balance Cleared: ${updatedProject.projectTitle}`
+        : `Project Approved & Invoice / SOW: ${updatedProject.projectTitle}`;
 
       const deliveryResult = await sendEmail({
         to: updatedProject.clientEmail,
-        subject: `Project Approved & Invoice / SOW: ${title}`,
-        html,
-        text,
-        senderName: process.env.BREVO_SENDER_NAME || 'Shivam Kumar',
-        senderEmail: process.env.BREVO_SENDER_EMAIL || process.env.RESEND_SENDER_EMAIL || process.env.EMAIL_FROM || 'noreply@rshivam.dev',
-        attachments: [{ filename: `Invoice-${invoiceNumber}.pdf`, content: pdfBuffer, contentType: 'application/pdf' }],
+        subject: emailSubject,
+        html: `<p>Hello ${escapeHtml(updatedProject.clientName || 'there')},</p>
+               <p>Your payment for <strong>${escapeHtml(updatedProject.projectTitle)}</strong> has been verified.</p>
+               <p>Total Valuation: ₹${updatedProject.totalCost}<br>Paid to date: ₹${updatedProject.amountPaid}<br>Remaining Due: ₹${updatedProject.balanceDue}</p>
+               <p>Access your portal: <a href="${escapeHtml(portalLink)}">${escapeHtml(portalLink)}</a></p>`,
+        text: `Hello ${updatedProject.clientName || 'there'},\n\nPayment verified for ${updatedProject.projectTitle}.\nTotal: ₹${updatedProject.totalCost}\nPaid: ₹${updatedProject.amountPaid}\nRemaining: ₹${updatedProject.balanceDue}\nPortal: ${portalLink}`,
+        attachments: pdfBuffer ? [{ filename: `Invoice-${invoiceNumber}.pdf`, content: pdfBuffer, contentType: 'application/pdf' }] : [],
         plainPasscode: provisioningResult?.manualRequired ? provisioningResult.manualPasscode : null,
       });
+
       const invoiceEmailSent = Boolean(deliveryResult?.success && !deliveryResult?.manualRequired);
       const credentialsManualRequired = Boolean(provisioningResult?.manualRequired);
 
@@ -268,16 +259,12 @@ export function createInvoiceAdminRouter({ verifyAdminToken, checkPerm }) {
         });
       }
 
-      const manualRequired = Boolean(provisioningResult?.manualRequired || deliveryResult?.manualRequired);
       return res.json({
         success: true,
-        message: invoiceEmailSent
-          ? 'Project approved, scoped, and invoice emailed.'
-          : 'Project approved and invoiced, but email delivery needs manual follow-up.',
+        message: invoiceEmailSent ? 'Approval completed and emailed.' : 'Approval completed; manual email dispatch required.',
         emailSent: invoiceEmailSent,
         credentialsManualRequired,
-        manualRequired,
-        ...(manualRequired ? { manualPasscode: provisioningResult?.manualPasscode ?? deliveryResult?.passcode ?? null } : {}),
+        manualRequired: credentialsManualRequired || Boolean(deliveryResult?.manualRequired),
         invoiceNumber,
       });
     } catch (err) {
