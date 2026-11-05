@@ -1,0 +1,191 @@
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id    String  @id @default(cuid())
+  email String  @unique
+  name  String?
+  phone String?
+
+  role String @default("client")
+
+  passwordHash       String?
+  passwordUpdatedAt  DateTime?
+  mustChangePassword Boolean   @default(false)
+
+  tempPasswordHash     String?
+  tempPasswordExpiry   DateTime?
+  tempPasswordAttempts Int       @default(0)
+
+  sessionToken       String?   @unique
+  sessionTokenExpiry DateTime?
+  lastLoginAt        DateTime?
+
+  sessionFingerprint String?
+  sessionUserAgent   String?
+  sessionIp          String?
+  lastActiveAt       DateTime?
+
+  resetOtpHash     String?
+  resetOtpExpiry   DateTime?
+  resetOtpAttempts Int       @default(0)
+
+  messages Message[]       @relation("MessageSender")
+  projects ClientProject[]
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ClientProject {
+  id           String  @id @default(cuid())
+  clientUserId String?
+  user         User?   @relation(fields: [clientUserId], references: [id], onDelete: SetNull)
+
+  clientEmail  String
+  clientName   String?
+  projectTitle String?
+  serviceName  String?
+
+  currency      String @default("INR")
+  totalCost     Float  @default(0)
+  amountPaid    Float  @default(0)
+  balanceDue    Float  @default(0)
+  paymentStatus String @default("Pending") // Pending | Partial (%) | Fully Paid
+
+  status       String  @default("Pending Verification")
+  progress     Int     @default(10)
+  deliveryDate String?
+  notes        String?
+
+  projectType     String?
+  estimatedDays   Int?
+  features        String[]  @default([])
+  invoiceNumber   String?   @unique
+  invoiceIssuedAt DateTime?
+  transactionRef  String?
+
+  isPaymentVerified Boolean  @default(false)
+  lastUpdated       DateTime @default(now())
+
+  messages Message[]
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientEmail])
+  @@index([clientUserId])
+}
+
+model Message {
+  id        String        @id @default(cuid())
+  projectId String
+  project   ClientProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  senderType  String
+  senderName  String?
+  senderEmail String?
+  senderId    String?
+  sender      User?   @relation("MessageSender", fields: [senderId], references: [id], onDelete: SetNull)
+
+  subject String?
+  body    String
+
+  kind String @default("contact")
+
+  transactionId String?
+  reference     String?
+
+  isRead     Boolean @default(false)
+  isArchived Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, createdAt])
+  @@index([senderType, isRead])
+}
+
+model Payment {
+  id            String  @id @default(cuid())
+  gateway       String // razorpay | paypal
+  transactionId String
+  orderId       String?
+
+  status   String @default("captured") // captured | failed | pending
+  amount   Float  @default(0)
+  currency String @default("INR")
+
+  email String?
+  name  String?
+
+  projectId String?
+  project   ClientProject? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  userId    String?
+  user      User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  details Json?
+
+  createdAt DateTime @default(now())
+
+  @@unique([gateway, transactionId])
+  @@index([email])
+}
+
+model AdminAlert {
+  id       String @id @default(cuid())
+  type     String // payment_success | payment_failed | webhook_error | superadmin_reset | team_reset | client_reset | qr_submission | qr_approval | user_created | otp_sent | session_created | contact_message | portal_message
+  severity String @default("info") // info | warning | error
+
+  userId    String?
+  userName  String?
+  userEmail String?
+
+  message String
+  details Json?
+
+  source String? // razorpay | paypal | qr | admin | system
+
+  createdAt DateTime @default(now())
+
+  @@index([type, createdAt])
+}
+
+model AuditLog {
+  id String @id @default(cuid())
+
+  action    String // ADMIN_LOGIN_SUCCESS, QR_PAYMENT_APPROVED, ...
+  actorId   String?
+  actorRole String?
+
+  targetEmail String?
+  ipAddress   String?
+  userAgent   String?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([action, createdAt])
+  @@index([actorId, createdAt])
+  @@index([createdAt])
+}
+
+model ProcessedWebhook {
+  id        String   @id @default(cuid())
+  gateway   String // razorpay | paypal
+  eventId   String
+  createdAt DateTime @default(now())
+
+  @@unique([gateway, eventId])
+  @@index([createdAt])
+}
+
