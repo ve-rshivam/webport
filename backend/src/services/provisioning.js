@@ -140,7 +140,7 @@ export async function provisionFromPayment(input, {
       throw new ValidationError('Payment amount exceeds the verified project valuation.');
     }
   }
-}
+
 
   const user = await prisma.user.upsert({
     where: { email },
