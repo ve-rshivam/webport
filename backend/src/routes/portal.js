@@ -28,6 +28,7 @@ import {
   sendOtpEmail,
   sendCredentialsEmail,
   sendEmail,
+  getSupportEmail,
   sendPortalMessageEmail,
   adminNotifyRecipients,
   portalUrl,
@@ -197,7 +198,7 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
             <p style="font-size:12px;color:#71695d">If you did not request this, ignore this email — your current password stays unchanged.</p>
           </div>`,
           text: `Hello ${user.name || 'there'},\n\nReset your client portal password (valid ${RESET_TOKEN_TTL_MINUTES} minutes, single use):\n${resetUrl}\n\nIf you did not request this, ignore this email — your current password stays unchanged.`,
-          replyTo: process.env.EMAIL_SUPPORT || undefined,
+          replyTo: getSupportEmail(),
         });
         emailSent = Boolean(dispatchResult?.success && !dispatchResult?.manualRequired);
       } catch (mailErr) {

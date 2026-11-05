@@ -1,4 +1,4 @@
-export const SUPPORT_EMAIL = String(import.meta.env.VITE_SUPPORT_EMAIL ?? '').trim();
+export const SUPPORT_EMAIL = 'support@rshivam.dev';
 export const CONTACT_EMAIL = String(import.meta.env.VITE_CONTACT_EMAIL ?? '').trim();
 export const CONTACT_PHONE = String(import.meta.env.VITE_CONTACT_PHONE ?? '').trim();
 

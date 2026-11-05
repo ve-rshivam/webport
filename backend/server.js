@@ -12,7 +12,7 @@ import { createPortalRouter } from './src/routes/portal.js';
 import { createAdminPortalRouter, createInvoiceAdminRouter, createManualClientProjectRouter } from './src/routes/admin.js';
 import { createAlertsRouter } from './src/routes/alerts.js';
 import { createQrRouter } from './src/routes/qr.js';
-import { sendCredentialsEmail, sendEmail } from './src/services/email.service.js';
+import { getSupportEmail, sendCredentialsEmail, sendEmail } from './src/services/email.service.js';
 import { provisionFromPayment } from './src/services/provisioning.js';
 import bcrypt from 'bcryptjs';
 import helmet from 'helmet';
@@ -74,15 +74,32 @@ app.use(helmet({
 }));
 app.use(mongoSanitize());
 
-const ADMIN_ORIGINS = [
-  'https://admin.rshivam.dev',
-  'https://rshivam.dev',
-  'http://localhost:5173',
-  ...(process.env.ADMIN_ORIGINS ? process.env.ADMIN_ORIGINS.split(',').map((value) => value.trim()) : []),
-  process.env.FRONTEND_URL,
-].filter(Boolean);
 
-const ALLOWED_ORIGINS = [...ADMIN_ORIGINS, 'http://localhost:3000'].filter(Boolean);
+const rawAdminEnv = [
+  process.env.ADMIN_ORIGINS,
+  process.env.ADMIN_ALLOWED_ORIGIN,
+]
+  .filter(Boolean)
+  .join(',');
+
+const envAdminOrigins = rawAdminEnv
+  .split(',')
+  .map((value) => value.trim().replace(/\/$/, '')) // extra '/' hata dega
+  .filter(Boolean);
+
+const ADMIN_ORIGINS = Array.from(
+  new Set([
+    ...envAdminOrigins,
+    'https://rshivam.dev',
+    'https://www.rshivam.dev',
+    process.env.FRONTEND_URL?.trim().replace(/\/$/, ''),
+    ...(process.env.NODE_ENV !== 'production'
+      ? ['http://localhost:5173', 'http://localhost:3000']
+      : []),
+  ].filter(Boolean))
+);
+
+const ALLOWED_ORIGINS = [...ADMIN_ORIGINS];
 
 const requireTrustedOrigin = (req, res, next) => {
   if (isTrustedOrigin(req.headers.origin, ADMIN_ORIGINS)) return next();
@@ -1745,11 +1762,18 @@ app.post('/api/admin/team', verifyAdminToken, async (req, res) => {
       });
       
       try {
+        const adminLoginUrl =
+          (process.env.ADMIN_ALLOWED_ORIGIN || process.env.ADMIN_ORIGINS || '')
+            .split(',')[0]
+            .trim()
+            .replace(/\/$/, '') ||
+          `${(process.env.FRONTEND_URL || 'https://rshivam.dev').trim().replace(/\/$/, '')}/admin`;
+
         await safeSend({
           from: senderEmail,
           to: identifier,
-          subject: "🎉 Welcome to Shivam Web Studio Team",
-          html: `<p>Hi ${name},</p><p>You've been granted access to the Admin Dashboard.</p><p><b>Login Email:</b> ${identifier}<br><b>Password:</b> ${rawPassword}<br><b>2FA PIN:</b> ${rawPin}</p><p><em>For security, please login and change your Password and PIN immediately.</em></p><p>Login here: <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/admin">Admin Panel</a></p>`
+          subject: "🎉 Welcome to Group of SINGH Paradox — Admin Team",
+          html: `<p>Hi ${escapeHtml(name)},</p><p>You've been granted access to the Admin Dashboard.</p><p><b>Login Email:</b> ${escapeHtml(identifier)}<br><b>Password:</b> ${escapeHtml(rawPassword)}<br><b>2FA PIN:</b> ${escapeHtml(rawPin)}</p><p><em>For security, please login and change your Password and PIN immediately.</em></p><p>Login here: <a href="${escapeHtml(adminLoginUrl)}">Admin Panel</a></p>`
         });
       } catch(e) { console.log("Team email failed", e.message); }
 
@@ -2156,7 +2180,7 @@ app.post('/api/admin/verify-client-payment/:id', verifyAdminToken, checkPerm(['p
         from: senderEmail,
         to: project.clientEmail,
         subject: "🎉 Payment Verified - Your Project Access Key",
-        html: `<h3>Hi ${project.clientName},</h3><p>Your payment for <strong>${project.projectTitle}</strong> has been successfully verified.</p><p>You can now track your project's live progress on our portal.</p><br><p><strong>Login Email:</strong> ${project.clientEmail}</p><p><strong>Secure Access Key:</strong> <span style="font-size:24px; color:#00e5ff; font-weight:bold; letter-spacing: 4px;">${rawAccessKey}</span></p><br><p><em>Note: For security reasons, do not share it with anyone!</em></p><br><p><em>Forgot or want to change your Access Key? <a href="${process.env.FRONTEND_URL || 'http://localhost:5173'}/portal">Click here to Reset Password</a></em></p>`
+        html: `<h3>Hi ${project.clientName},</h3><p>Your payment for <strong>${project.projectTitle}</strong> has been successfully verified.</p><p>You can now track your project's live progress on our portal.</p><br><p><strong>Login Email:</strong> ${project.clientEmail}</p><p><strong>Secure Access Key:</strong> <span style="font-size:24px; color:#00e5ff; font-weight:bold; letter-spacing: 4px;">${rawAccessKey}</span></p><br><p><em>Note: For security reasons, do not share it with anyone!</em></p><br><p><em>Forgot or want to change your Access Key? <a href="${process.env.FRONTEND_URL || 'https://rshivam.dev'}/portal">Click here to Reset Password</a></em></p>`
       });
     } catch(mailErr) {
        console.log("Email failed, but key was generated.");
@@ -2207,7 +2231,7 @@ app.post('/api/admin/approve-payment-message/:msgId', verifyAdminToken, checkPer
                 from: senderEmail,
                 to: msg.email,
                 subject: "🎉 Remaining Balance Verified",
-                html: `<h3>Hi ${escapeHtml(msg.name)},</h3><p>Your payment of ${escapeHtml(paymentAmount)} has been verified. Remaining balance: ${escapeHtml(nextBalanceDue)}.</p><br><p><em>Forgot or want to change your Access Key? <a href="${escapeHtml(process.env.FRONTEND_URL || 'http://localhost:5173')}/portal">Click here to Reset Password</a></em></p>`
+                html: `<h3>Hi ${escapeHtml(msg.name)},</h3><p>Your payment of ${escapeHtml(paymentAmount)} has been verified. Remaining balance: ${escapeHtml(nextBalanceDue)}.</p><br><p><em>Forgot or want to change your Access Key? <a href="${escapeHtml(process.env.FRONTEND_URL || 'https://rshivam.dev')}/portal">Click here to Reset Password</a></em></p>`
               });
             } catch(e) {}
 
@@ -2256,7 +2280,7 @@ app.post('/api/admin/approve-payment-message/:msgId', verifyAdminToken, checkPer
         from: senderEmail,
         to: msg.email,
         subject: "🎉 Payment Verified - Portal Login Details",
-        html: `<h3>Hi ${escapeHtml(msg.name)},</h3><p>Your payment is verified. Track your project here: <a href="${escapeHtml(process.env.FRONTEND_URL || 'http://localhost:5173')}/portal">Client Portal</a></p><p>Email: <b>${escapeHtml(msg.email)}</b></p><p>Access Key: <b style="color:#00e5ff; font-size:20px;">${escapeHtml(rawAccessKey)}</b></p><br><p><em>Forgot or want to change your Access Key? <a href="${escapeHtml(process.env.FRONTEND_URL || 'http://localhost:5173')}/portal">Click here to Reset Password</a></em></p>`
+        html: `<h3>Hi ${escapeHtml(msg.name)},</h3><p>Your payment is verified. Track your project here: <a href="${escapeHtml(process.env.FRONTEND_URL || 'https://rshivam.dev')}/portal">Client Portal</a></p><p>Email: <b>${escapeHtml(msg.email)}</b></p><p>Access Key: <b style="color:#00e5ff; font-size:20px;">${escapeHtml(rawAccessKey)}</b></p><br><p><em>Forgot or want to change your Access Key? <a href="${escapeHtml(process.env.FRONTEND_URL || 'https://rshivam.dev')}/portal">Click here to Reset Password</a></em></p>`
       });
     } catch(mailErr) {
       // [H3] Credential kabhi log nahi karte — sirf message id.
@@ -2298,7 +2322,7 @@ app.post('/api/admin/reject-payment-message/:msgId', verifyAdminToken, checkPerm
             <h3 style="color: #333;">What to do next?</h3>
             <p style="color: #555; font-size: 15px;">Please contact our support team immediately with a valid payment proof (clear screenshot) so we can resolve this issue.</p>
             
-            <a href="mailto:${escapeHtml(process.env.EMAIL_SUPPORT || '')}" style="display: inline-block; padding: 10px 20px; background: #ff4d4d; color: #fff; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 10px;">Contact Support</a>
+            <a href="mailto:${escapeHtml(getSupportEmail())}" style="display: inline-block; padding: 10px 20px; background: #ff4d4d; color: #fff; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 10px;">Contact Support</a>
             
             <br/><br/>
             <p style="color: #555; font-size: 14px;">Regards,<br/><strong>Shivam Web Studio</strong></p>

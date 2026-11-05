@@ -30,13 +30,18 @@ const Admin = lazy(() => import('./pages/Admin'));
 const Payment = lazy(() => import('./pages/Payment'));
 const Legal = lazy(() => import('./pages/Legal'));
 
-// [SEO] Admin subdomain aur /admin, /portal routes par noindex, nofollow meta set hota hai.
+
+const ADMIN_PREFIX = (import.meta.env.VITE_ADMIN_SUBDOMAIN || 'admin').trim().toLowerCase();
+
+const isStealthAdminHost = () =>
+  window.location.hostname.toLowerCase().startsWith(`${ADMIN_PREFIX}.`);
+
 const RobotsMeta = () => {
   const location = useLocation();
 
   useEffect(() => {
     const isPrivate =
-      window.location.hostname.startsWith('admin.') ||
+      isStealthAdminHost() ||
       location.pathname.startsWith('/admin') ||
       location.pathname.startsWith('/portal');
 
@@ -85,7 +90,7 @@ const AnimatedRoutes = () => {
 
 function App() {
   useInactivityTimeout();
-  const isAdminSubdomain = window.location.hostname.startsWith('admin.');
+  const isAdminSubdomain = isStealthAdminHost();
 
   return (
     <Router>

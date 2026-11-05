@@ -6,17 +6,17 @@ import { prisma } from '../lib/prisma.js';
 
 const SURFACE_SENDER_ENV = {
   noreply: ['RESEND_SENDER_EMAIL', 'BREVO_SENDER_EMAIL', 'EMAIL_FROM'],
-  support: ['EMAIL_SUPPORT', 'EMAIL_FROM'],
   adminSelf: ['ADMIN_SENDER_EMAIL', 'EMAIL_FROM'],
 };
 
 export function getSenderForSurface(surface) {
+  if (surface === 'support') return getSupportEmail();
   const keys = SURFACE_SENDER_ENV[surface] ?? SURFACE_SENDER_ENV.noreply;
   return keys.map((key) => process.env[key]?.trim()).find(Boolean) ?? '';
 }
 
 export function getSupportEmail() {
-  return process.env.EMAIL_SUPPORT?.trim() ?? '';
+  return 'support@rshivam.dev';
 }
 
 export function appBaseUrl() {

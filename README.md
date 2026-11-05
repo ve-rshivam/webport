@@ -58,7 +58,6 @@ never committed. Configure transactional email using these backend variables:
 RESEND_API_KEY=<Resend API key>
 APP_BASE_URL=https://rshivam.dev
 EMAIL_FROM=<verified sender mailbox>
-EMAIL_SUPPORT=<support mailbox>
 ADMIN_NOTIFY_EMAIL=<admin notification mailbox>
 ```
 
@@ -86,10 +85,10 @@ bcrypt hashes, never as plain text.
 ## Email
 
 Automated mail (portal credentials, OTPs, payment confirmations, admin alerts) is
-sent from the Express backend through the configured email providers. Human replies
-use the `EMAIL_SUPPORT` backend environment variable. Public contact and support
-addresses are configured with `VITE_CONTACT_EMAIL` and `VITE_SUPPORT_EMAIL`; Vite
-variables are included in the public browser build and are not secrets.
+sent from the Express backend through the configured email providers. The support
+reply address is defined in source for both email replies and public contact links.
+The public contact address is configured with `VITE_CONTACT_EMAIL`; Vite variables
+are included in the browser build and are not secrets.
 
 ## Deployment notes
 

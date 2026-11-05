@@ -7,7 +7,7 @@ import {
   issueSession,
   TEMP_PASSWORD_TTL_MINUTES,
 } from './auth.service.js';
-import { sendCredentialsEmail, sendEmail, portalUrl } from './email.service.js';
+import { getSupportEmail, sendCredentialsEmail, sendEmail, portalUrl } from './email.service.js';
 import { createAlert } from './notifications.js';
 import { escapeHtml } from '../lib/security.js';
 import { recordAudit, AUDIT_ACTIONS } from '../lib/audit.js';
@@ -292,7 +292,7 @@ export async function sendTopUpReceipt({ to, name, amount, currency, projectTitl
       html: `<p>Hi ${escapeHtml(name || 'there')},</p><p>We received your payment of <strong>${escapeHtml(currency)} ${escapeHtml(amount)}</strong>${projectTitle ? ` for <strong>${escapeHtml(projectTitle)}</strong>` : ''}. Your project balance has been updated.</p><p><a href="${portalUrl('/portal')}">Open the client portal</a></p>`,
       text: `Hi ${name || 'there'},\n\nWe received your payment of ${currency} ${amount}${projectTitle ? ` for ${projectTitle}` : ''}. Your project balance has been updated.\n\n${portalUrl('/portal')}`,
       surface: 'noreply',
-      replyTo: process.env.EMAIL_SUPPORT || undefined,
+      replyTo: getSupportEmail(),
     });
   } catch (err) {
     console.error('[provisioning] receipt email failed:', err?.message ?? err);
