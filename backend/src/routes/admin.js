@@ -111,9 +111,9 @@ export function createInvoiceAdminRouter({
 
         provisioningResult = await provisionFromPayment({
           gateway: 'qr',
-          transactionId: transactionRef,
-          amount: proofAmount,
-          projectAmount: proofAmount,
+          transactionId: qrAlert.id,
+          amount: verifiedAmountPaid,
+          projectAmount: verifiedAmountPaid,
           totalAmount: isRemainingQr ? 0 : totalCost,
           currency: qrDetails.currency ?? 'INR',
           email,
@@ -121,10 +121,11 @@ export function createInvoiceAdminRouter({
           serviceName: qrDetails.serviceName ?? body.projectType ?? 'Project Service',
           projectId: qrDetails.projectId ?? body.projectId ?? null,
           isRemainingPayment: isRemainingQr,
-          details: { gateway: 'qr', submissionId: qrAlert.id, isRemainingPayment: isRemainingQr },
+          details: { gateway: 'qr', submissionId: qrAlert.id, isRemainingPayment: isRemainingQr, utr: transactionRef },
         }, {
           disconnectClientSockets: safeDisconnect,
           syncClientProjectCredentials: safeSync,
+          adminApproval: true, 
         });
 
         project = provisioningResult.project;

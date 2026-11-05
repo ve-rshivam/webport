@@ -111,6 +111,7 @@ export async function issueTemporaryCredentials(user, {
 export async function provisionFromPayment(input, {
   disconnectClientSockets = () => {},
   syncClientProjectCredentials = async () => {},
+  adminApproval = false,
 } = {}) {
   const gateway = input.gateway;
   const transactionId = String(input.transactionId ?? '').trim();
@@ -265,13 +266,15 @@ export async function provisionFromPayment(input, {
       projectTitle: project.projectTitle,
       disconnectClientSockets,
       syncClientProjectCredentials,
+      sendEmail: !adminApproval,
     });
     try {
       session = await issueSession(prisma, user);
     } catch (err) {
       console.error('[provisioning] session issue failed:', err?.message ?? err);
     }
-  } else if (input.isRemainingPayment) {
+  } else if (input.isRemainingPayment && !adminApproval) { 
+    
     await sendTopUpReceipt({
       to: user.email,
       name: user.name,
