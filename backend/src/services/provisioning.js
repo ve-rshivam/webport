@@ -375,6 +375,6 @@ export async function sendTopUpReceipt({ to, name, amount, currency, projectTitl
       replyTo: getSupportEmail(),
     });
   } catch (err) {
-    console.error('[provisioning] receipt email failed:', err?.message ?? err);
+    console.error('[provisioh ning] receipt email failed:', err?.message ?? err);
   }
 }
