@@ -131,11 +131,14 @@ export async function provisionFromPayment(input, {
         orderBy: { createdAt: 'desc' },
       });
     }
-    const existingUser = existing.userId
-      ? await prisma.user.findUnique({ where: { id: existing.userId } })
-      : await prisma.user.findUnique({ where: { email } });
-
-    return { duplicate: true, payment: existing, project: linkedProject, user: existingUser, token: null };
+    
+    // Yahan fix hai: Agar testing me project delete ho gaya tha, toh ise duplicate na maane aur aage badhne de!
+    if (linkedProject) {
+      const existingUser = existing.userId
+        ? await prisma.user.findUnique({ where: { id: existing.userId } })
+        : await prisma.user.findUnique({ where: { email } });
+      return { duplicate: true, payment: existing, project: linkedProject, user: existingUser, token: null };
+    }
   }
 
 

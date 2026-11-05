@@ -146,7 +146,8 @@ export function createInvoiceAdminRouter({
 
       // Remaining Payment handling (Sirf progress/notes/invoice update karega, parameters overwrite nahi karega)
       let updatedProject;
-      let invoiceNumber = project.invoiceNumber || makeInvoiceNumber();
+      // FIX: Remaining payment ke liye hamesha naya invoice generate karein taaki fresh receipt mile
+      let invoiceNumber = isRemainingQr ? makeInvoiceNumber() : (project.invoiceNumber || makeInvoiceNumber());
       const invoiceIssuedAt = new Date();
 
       if (isRemainingQr) {
