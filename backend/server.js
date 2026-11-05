@@ -2059,6 +2059,15 @@ app.post('/api/education', verifyAdminToken, checkPerm(['skills']), async (req, 
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
+app.put('/api/education/:id', verifyAdminToken, checkPerm(['skills']), async (req, res) => {
+  try {
+    await Education.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    res.json({ success: true, message: "Education updated successfully!" });
+  } catch (err) { 
+    res.status(500).json({ success: false, message: "Update failed" }); 
+  }
+});
+
 app.delete('/api/education/:id', verifyAdminToken, checkPerm(['skills']), async (req, res) => {
   try { await Education.findByIdAndDelete(req.params.id); res.json({ success: true }); } 
   catch (err) { res.status(500).json({ success: false }); }
@@ -2071,6 +2080,15 @@ app.post('/api/experience', verifyAdminToken, checkPerm(['skills']), async (req,
     await newExp.save();
     res.status(200).json({ success: true, message: "Experience added!" });
   } catch (err) { res.status(500).json({ success: false }); }
+});
+
+app.put('/api/experience/:id', verifyAdminToken, checkPerm(['skills']), async (req, res) => {
+  try {
+    await Experience.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    res.json({ success: true, message: "Experience updated successfully!" });
+  } catch (err) { 
+    res.status(500).json({ success: false, message: "Update failed" }); 
+  }
 });
 
 app.delete('/api/experience/:id', verifyAdminToken, checkPerm(['skills']), async (req, res) => {

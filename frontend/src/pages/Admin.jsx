@@ -856,13 +856,20 @@ const Admin = () => {
     e.preventDefault();
     try {
       const token = adminSession.token();
-      await apiRequest('/api/education', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: newEdu
+      const isEditing = !!newEdu._id;
+      const url = isEditing ? `/api/education/${newEdu._id}` : '/api/education';
+      const method = isEditing ? 'PUT' : 'POST';
+
+      await apiRequest(url, {
+        method, 
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, 
+        body: newEdu
       });
 
       setNewEdu({ degree: '', institution: '', duration: '', score: '', description: '', location: '' });
       fetchDashboardData();
-    } catch(err) { alert(err?.message || "Failed to add education"); }
+      alert(`Education ${isEditing ? 'Updated' : 'Added'} Successfully!`);
+    } catch(err) { alert(err?.message || "Failed to save education"); }
   };
 
   const deleteEdu = async (id) => {
@@ -874,6 +881,12 @@ const Admin = () => {
         fetchDashboardData();
       } catch(err) { alert("Failed to delete"); }
     }
+  };
+
+  const editEdu = (edu) => {
+    setNewEdu({ _id: edu._id, degree: edu.degree, institution: edu.institution, duration: edu.duration, score: edu.score, description: edu.description, location: edu.location || '' });
+    setActiveTab('education');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
 
@@ -923,16 +936,20 @@ const Admin = () => {
     e.preventDefault();
     try {
       const token = adminSession.token();
-      await apiRequest('/api/experience', {
-        method: 'POST',
+      const isEditing = !!newExp._id;
+      const url = isEditing ? `/api/experience/${newExp._id}` : '/api/experience';
+      const method = isEditing ? 'PUT' : 'POST';
+
+      await apiRequest(url, {
+        method,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: newExp
       });
 
       setNewExp({ duration: '', role: '', company: '', description: '' });
       fetchDashboardData();
-      alert("Experience Added to Timeline!");
-    } catch(err) { alert(err?.message || "Failed to add experience"); }
+      alert(`Experience ${isEditing ? 'Updated' : 'Added to Timeline'}!`);
+    } catch(err) { alert(err?.message || "Failed to save experience"); }
   };
 
   const deleteExp = async (id) => {
@@ -949,8 +966,9 @@ const Admin = () => {
 
 
   const editExp = (exp) => {
-    setNewExp({ duration: exp.duration, role: exp.role, company: exp.company, description: exp.description });
+    setNewExp({ _id: exp._id, duration: exp.duration, role: exp.role, company: exp.company, description: exp.description });
     setActiveTab('experience');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const updateExp = async (e) => {
@@ -968,10 +986,7 @@ const Admin = () => {
     } catch (err) { alert(err?.message || "Failed to update experience"); }
   };
 
-  const editEdu = (edu) => {
-    setNewEdu({ degree: edu.degree, institution: edu.institution, duration: edu.duration, score: edu.score, description: edu.description, location: edu.location || '' });
-    setActiveTab('education');
-  };
+  
 
   const updateEdu = async (e) => {
     e.preventDefault();
