@@ -118,7 +118,23 @@ export async function provisionFromPayment(input, {
 
   const existing = await findPayment(gateway, transactionId);
   if (existing && existing.status === 'captured') {
-    return { duplicate: true, payment: existing, project: null, user: null, token: null };
+    let linkedProject = null;
+    if (existing.projectId) {
+      linkedProject = await prisma.clientProject.findUnique({ where: { id: existing.projectId } });
+    }
+    if (!linkedProject) {
+      linkedProject = await prisma.clientProject.findFirst({
+        where: {
+          OR: [{ clientUserId: existing.userId || undefined }, { clientEmail: { equals: email, mode: 'insensitive' } }],
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+    const existingUser = existing.userId
+      ? await prisma.user.findUnique({ where: { id: existing.userId } })
+      : await prisma.user.findUnique({ where: { email } });
+
+    return { duplicate: true, payment: existing, project: linkedProject, user: existingUser, token: null };
   }
 
   const email = validateEmail(input.email, 'payment email');
