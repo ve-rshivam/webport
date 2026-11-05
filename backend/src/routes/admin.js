@@ -112,8 +112,8 @@ export function createInvoiceAdminRouter({
         provisioningResult = await provisionFromPayment({
           gateway: 'qr',
           transactionId: qrAlert.id,
-          amount: verifiedAmountPaid,
-          projectAmount: verifiedAmountPaid,
+          amount: amountPaid,
+          projectAmount: amountPaid,
           totalAmount: isRemainingQr ? 0 : totalCost,
           currency: qrDetails.currency ?? 'INR',
           email,
