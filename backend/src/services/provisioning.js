@@ -115,6 +115,7 @@ export async function provisionFromPayment(input, {
   const gateway = input.gateway;
   const transactionId = String(input.transactionId ?? '').trim();
   if (!transactionId) throw new ValidationError('Payment is missing a transaction id.');
+  const email = validateEmail(input.email, 'payment email');
 
   const existing = await findPayment(gateway, transactionId);
   if (existing && existing.status === 'captured') {
@@ -137,7 +138,7 @@ export async function provisionFromPayment(input, {
     return { duplicate: true, payment: existing, project: linkedProject, user: existingUser, token: null };
   }
 
-  const email = validateEmail(input.email, 'payment email');
+
   const amount = Number(input.amount ?? 0);
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new ValidationError('Payment amount must be a positive number.');
