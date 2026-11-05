@@ -31,10 +31,25 @@ const Payment = lazy(() => import('./pages/Payment'));
 const Legal = lazy(() => import('./pages/Legal'));
 
 
-const ADMIN_PREFIX = (import.meta.env.VITE_ADMIN_SUBDOMAIN || 'admin').trim().toLowerCase();
+const ADMIN_SUBDOMAIN = (import.meta.env.VITE_ADMIN_SUBDOMAIN || '')
+  .trim()
+  .replace(/['"]/g, '')
+  .trim()
+  .toLowerCase();
 
-const isStealthAdminHost = () =>
-  window.location.hostname.toLowerCase().startsWith(`${ADMIN_PREFIX}.`);
+const isStealthAdminHost = () => {
+  if (!ADMIN_SUBDOMAIN || typeof window === 'undefined') return false;
+  return window.location.hostname.toLowerCase() === `${ADMIN_SUBDOMAIN}.rshivam.dev`;
+};
+
+const isMainDomainHost = () =>
+  typeof window !== 'undefined' &&
+  ['rshivam.dev', 'www.rshivam.dev'].includes(window.location.hostname.toLowerCase());
+
+const AdminRoute = () => {
+  if (isMainDomainHost()) return <Navigate to="/" replace />;
+  return <PageWrapper><Admin /></PageWrapper>;
+};
 
 const RobotsMeta = () => {
   const location = useLocation();
@@ -79,7 +94,8 @@ const AnimatedRoutes = () => {
         <Route path="/legal" element={<PageWrapper><Legal /></PageWrapper>} />
         <Route path="/cookies" element={<PageWrapper><Cookies /></PageWrapper>} />
         <Route path="/reviews" element={<PageWrapper><Reviews /></PageWrapper>} />
-        <Route path="/admin" element={<PageWrapper><Admin /></PageWrapper>} />
+        <Route path="/admin" element={<AdminRoute />} />
+        <Route path="/admin/*" element={<AdminRoute />} />
         <Route path="/experience" element={<PageWrapper><Experience /></PageWrapper>} />
         <Route path="/portal" element={<PageWrapper><ClientPortal /></PageWrapper>} />
         <Route path="*" element={<PageWrapper><NotFound /></PageWrapper>} />
