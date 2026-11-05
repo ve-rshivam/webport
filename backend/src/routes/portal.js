@@ -54,6 +54,7 @@ function projectSummary(project) {
     amountPaid: project.amountPaid,
     balanceDue: project.balanceDue,
     deliveryDate: project.deliveryDate,
+    previewUrl: project.previewUrl || '',
     projectType: project.projectType,
     estimatedDays: project.estimatedDays,
     features: project.features,
@@ -64,7 +65,7 @@ function projectSummary(project) {
   };
 }
 
-export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimiter, invoiceDownloadLimiter, disconnectClientSockets = () => {} } = {}) {
+export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimiter, invoiceDownloadLimiter, disconnectClientSockets = () => {}, syncClientProjectCredentials = async () => {} } = {}) {
   const router = express.Router();
   const portalAuth = createPortalAuth(prisma);
   const limit = authLimiter ?? ((_req, _res, next) => next());
@@ -72,7 +73,7 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
   const messageLimit = messageLimiter ?? ((_req, _res, next) => next());
   const invoiceLimit = invoiceDownloadLimiter ?? ((_req, _res, next) => next());
 
-    // [RATE LIMITER - AUTH LOGIN]: Client login par brute-force password guessing rokne ke liye.
+    // [RATE LIMITER - AUTH LOGIN]
     router.post('/login', limit, async (req, res) => {
     try {
       const body = requireJsonBody(req);
@@ -85,22 +86,39 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
       let mustChangePassword = false;
       let authenticated = false;
 
-      if (user.passwordHash && (await verifySecret(password, user.passwordHash))) {
-        authenticated = true;
-        mustChangePassword = Boolean(user.mustChangePassword);
-      } else if (user.tempPasswordHash && user.tempPasswordExpiry && user.tempPasswordExpiry.getTime() > Date.now()) {
+      // CASE 1: Temporary password active
+      if (user.mustChangePassword && user.tempPasswordHash) {
+        if (!user.tempPasswordExpiry || user.tempPasswordExpiry.getTime() <= Date.now()) {
+          return res.status(401).json({
+            success: false,
+            message: 'Temporary password expired. Request new portal access.',
+          });
+        }
         if (user.tempPasswordAttempts >= 5) {
-          return res.status(429).json({ success: false, message: 'Too many temporary-password attempts. Request a reset code.' });
+          return res.status(429).json({
+            success: false,
+            message: 'Too many temporary-password attempts. Request a reset code.',
+          });
         }
         if (await verifySecret(password, user.tempPasswordHash)) {
           authenticated = true;
-          mustChangePassword = Boolean(user.mustChangePassword || !user.passwordHash);
+          mustChangePassword = true;
         } else {
           await prisma.user.update({
             where: { id: user.id },
             data: { tempPasswordAttempts: { increment: 1 } },
           });
+          // Strictly reject here so old passwordHash is NEVER checked when temp password is active
+          return res.status(401).json({
+            success: false,
+            message: 'Invalid temporary password. Your previous password is no longer valid.',
+          });
         }
+      }
+      // CASE 2: Normal permanent password login
+      else if (user.passwordHash && (await verifySecret(password, user.passwordHash))) {
+        authenticated = true;
+        mustChangePassword = false;
       }
 
       if (!authenticated) {
@@ -139,10 +157,11 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
       const body = requireJsonBody(req);
       const password = validatePassword(body.password, 'password');
 
-      await prisma.user.update({
+      const passwordHash = await hashSecret(password);
+      const updatedUser = await prisma.user.update({
         where: { id: req.user.id },
         data: {
-          passwordHash: await hashSecret(password),
+          passwordHash,
           passwordUpdatedAt: new Date(),
           mustChangePassword: false,
           tempPasswordHash: null,
@@ -150,6 +169,7 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
           tempPasswordAttempts: 0,
         },
       });
+      await syncClientProjectCredentials({ email: updatedUser.email, passwordHash, isTemporaryKey: false });
 
       return res.json({ success: true, message: 'Permanent password saved.' });
     } catch (err) {
@@ -238,10 +258,11 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
       }
 
       // Single-use: atomic claim, do parallel requests me se sirf ek jeetegi.
+      const passwordHash = await hashSecret(password);
       const consumed = await prisma.user.updateMany({
         where: { id: user.id, resetOtpHash: tokenHash, resetOtpExpiry: { gt: new Date() } },
         data: {
-          passwordHash: await hashSecret(password),
+          passwordHash,
           passwordUpdatedAt: new Date(),
           mustChangePassword: false,
           resetOtpHash: null,
@@ -260,6 +281,7 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
       if (consumed.count === 0) {
         throw new ValidationError('This reset link has already been used. Request a new one.', 409);
       }
+      await syncClientProjectCredentials({ email: user.email, passwordHash, isTemporaryKey: false });
       disconnectClientSockets(user.id);
 
       await recordAudit({
@@ -308,10 +330,11 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
         throw new ValidationError('This reset code is invalid or has expired.');
       }
 
+      const passwordHash = await hashSecret(password);
       await prisma.user.update({
         where: { id: user.id },
         data: {
-          passwordHash: await hashSecret(password),
+          passwordHash,
           passwordUpdatedAt: new Date(),
           mustChangePassword: false,
           resetOtpHash: null,
@@ -322,8 +345,13 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
           tempPasswordAttempts: 0,
           sessionToken: null,
           sessionTokenExpiry: null,
+          sessionFingerprint: null,
+          sessionUserAgent: null,
+          sessionIp: null,
+          lastActiveAt: null,
         },
       });
+      await syncClientProjectCredentials({ email: user.email, passwordHash, isTemporaryKey: false });
       disconnectClientSockets(user.id);
 
       const fresh = await prisma.user.findUnique({ where: { id: user.id } });

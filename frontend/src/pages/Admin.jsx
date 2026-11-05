@@ -5,6 +5,7 @@ import { writeCachedRoles } from '../lib/roleCache';
 
 import { apiRequest, apiUrl } from '../lib/api';
 import { adminSession } from '../lib/authSession';
+import LivePreviewTab from '../components/LivePreviewTab';
 
 const PROJECT_TYPES = [
   'SaaS Web Platform',
@@ -31,6 +32,7 @@ const EMPTY_PROJECT_DRAFT = {
   clientName: '',
   clientEmail: '',
   projectTitle: '',
+  previewUrl: '',
   projectType: '',
   estimatedDays: '',
   totalCost: '',
@@ -81,6 +83,7 @@ function projectDraftFromRecord(project = {}) {
     clientName: project.clientName || '',
     clientEmail: project.clientEmail || '',
     projectTitle: project.projectTitle || project.serviceName || '',
+    previewUrl: project.previewUrl || '',
     projectType: project.projectType || '',
     estimatedDays: project.estimatedDays ?? '',
     totalCost: project.totalCost ?? '',
@@ -1105,7 +1108,10 @@ const Admin = () => {
           method: 'POST', headers: adminTokenHeaders()
         });
 
-        alert(data?.message || "Payment verified and access key emailed.");
+        const accessKeyNotice = data?.manualPasscode
+          ? `\n\nManual access key: ${data.manualPasscode}`
+          : '';
+        alert(`${data?.message || 'Payment verified and access key emailed.'}${accessKeyNotice}`);
         fetchDashboardData();
       } catch (err) { alert(err?.message || "Server error during verification."); }
     }
@@ -1114,28 +1120,41 @@ const Admin = () => {
   const verifyPaymentFromInbox = async (msgId) => {
     const paymentMessage = paymentMessages.find((item) => String(item?._id) === String(msgId));
     const amountPaid = Number(paymentMessage?.amountPaid || 0);
-    const totalCostInput = window.prompt(
-      `Enter the total project valuation (received advance: ₹${amountPaid.toLocaleString('en-IN')}):`,
-      String(amountPaid || '')
-    );
-    if (totalCostInput === null) return;
-    const totalCost = Number(totalCostInput);
-    if (!Number.isFinite(totalCost) || totalCost <= 0 || totalCost < amountPaid) {
-      alert('Total valuation must be at least the verified payment amount.');
-      return;
+    const isRemainingPayment = Boolean(paymentMessage?.isRemainingPayment || paymentMessage?.projectId)
+      || /\[REMAINING BALANCE PAYMENT\]/i.test(String(paymentMessage?.message || ''));
+    let totalCost;
+    if (!isRemainingPayment) {
+      const totalCostInput = window.prompt(
+        `Enter the total project valuation (received advance: ₹${amountPaid.toLocaleString('en-IN')}):`,
+        String(amountPaid || '')
+      );
+      if (totalCostInput === null) return;
+      totalCost = Number(totalCostInput);
+      if (!Number.isFinite(totalCost) || totalCost <= 0 || totalCost < amountPaid) {
+        alert('Total valuation must be at least the verified payment amount.');
+        return;
+      }
     }
 
-    if(window.confirm(`Create the project with ₹${amountPaid.toLocaleString('en-IN')} received against a ₹${totalCost.toLocaleString('en-IN')} valuation?`)) {
+    const confirmation = isRemainingPayment
+      ? `Apply the verified ₹${amountPaid.toLocaleString('en-IN')} payment to the linked project balance?`
+      : `Create the project with ₹${amountPaid.toLocaleString('en-IN')} received against a ₹${totalCost.toLocaleString('en-IN')} valuation?`;
+    if (window.confirm(confirmation)) {
       try {
         const token = adminSession.token();
         const data = await apiRequest(`/api/admin/approve-payment-message/${msgId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: { totalCost }
+          body: isRemainingPayment ? {} : { totalCost }
         });
 
-        alert("Success: " + (data?.message || 'Payment approved.'));
-        fetchDashboardData();
+        if (data?.emailSent === false) {
+          const manualKey = data?.manualPasscode ? `\n\nManual access key: ${data.manualPasscode}` : '';
+          alert(`${data?.message || 'Payment applied, but the client email could not be sent.'}${manualKey}`);
+        } else {
+          alert(data?.message || 'Payment approved and client notified.');
+        }
+        await fetchDashboardData();
       } catch (err) { alert(err?.message || "Server error during verification."); }
     }
   };
@@ -1153,8 +1172,12 @@ const Admin = () => {
           body: { reason }
         });
 
-        alert("" + (data?.message || 'Payment rejected.'));
-        fetchDashboardData();
+        if (data?.emailSent === false) {
+          alert(data?.message || 'The client could not be notified. This payment request remains available for retry.');
+          return;
+        }
+        alert(data?.message || 'Payment rejected and client notified.');
+        await fetchDashboardData();
       } catch (err) { alert(err?.message || "Server error during rejection."); }
     }
   };
@@ -1836,9 +1859,13 @@ const Admin = () => {
                     )}
 
                     <div className="mt-5 flex gap-3">
-                      <button onClick={() => verifyPaymentFromInbox(msg._id)} className="px-5 py-2.5 bg-[#00f5a0] text-[#000] border-none rounded font-bold cursor-pointer hover:opacity-90 transition-opacity">
-                        Verify & send access key
-                      </button>
+                      {(msg.isRemainingPayment || msg.projectId || /\[REMAINING BALANCE PAYMENT\]/i.test(String(msg.message || '')) || hasPerm('client_access')) && (
+                        <button onClick={() => verifyPaymentFromInbox(msg._id)} className="px-5 py-2.5 bg-[#00f5a0] text-[#000] border-none rounded font-bold cursor-pointer hover:opacity-90 transition-opacity">
+                          {msg.isRemainingPayment || msg.projectId || /\[REMAINING BALANCE PAYMENT\]/i.test(String(msg.message || ''))
+                            ? 'Verify balance payment'
+                            : 'Verify & send access key'}
+                        </button>
+                      )}
                       <button onClick={() => rejectPaymentFromInbox(msg._id)} className="px-5 py-2.5 bg-transparent text-[#ff4d4d] border border-[#ff4d4d] rounded font-bold cursor-pointer hover:bg-[#ff4d4d]/10 transition-colors">
                         Reject & email client
                       </button>
@@ -1971,7 +1998,7 @@ const Admin = () => {
                         />
                       )}
                       <div className="mt-4 flex flex-wrap gap-2">
-                        {hasPerm('projects') && hasPerm('payments') && (
+                        {hasPerm('projects') && hasPerm('payments') && hasPerm('client_access') && (
                           <button
                             onClick={() => approveQr(sub)}
                             className="px-4 py-2 bg-[#00f5a0] text-[#000] border-none rounded font-bold text-xs cursor-pointer hover:opacity-90 transition-opacity"
@@ -2288,6 +2315,15 @@ const Admin = () => {
                   <label className="block text-sm font-bold text-[var(--text-dim)]">Expected delivery
                     <input type="text" value={newProject.deliveryDate} onChange={(e) => setNewProject({ ...newProject, deliveryDate: e.target.value })} placeholder="e.g. 25 Oct 2026" className={`${inputClass} mt-2`} />
                   </label>
+                  <label className="block text-sm font-bold text-[var(--text-dim)]">Live Staging / Preview URL (Optional)
+                    <input
+                      type="url"
+                      value={newProject.previewUrl || ''}
+                      onChange={(e) => setNewProject({ ...newProject, previewUrl: e.target.value })}
+                      placeholder="https://client-staging.vercel.app"
+                      className={`${inputClass} mt-2`}
+                    />
+                  </label>
                   <label className="block text-sm font-bold text-[var(--text-dim)]">Features & deliverables (one per line)
                     <textarea rows="4" value={newProject.featuresText} onChange={(e) => setNewProject({ ...newProject, featuresText: e.target.value })} className={`${inputClass} mt-2 resize-y`} />
                   </label>
@@ -2296,7 +2332,11 @@ const Admin = () => {
                   </label>
 
                   <button type="submit" disabled={draftAmountPaid > draftTotalCost} className={`${buttonClass} disabled:cursor-not-allowed disabled:opacity-50`}>
-                    {editingProject ? 'Save Project Changes' : 'Create Project & Send Portal Access'}
+                    {editingProject
+                      ? 'Save Project Changes'
+                      : hasPerm('client_access')
+                        ? 'Create Project & Send Portal Access'
+                        : 'Create Project'}
                   </button>
                 </form>
               </div>
@@ -2386,8 +2426,16 @@ const Admin = () => {
                         <>
                           <button type="button" onClick={() => loadThread(project.id)} className="rounded bg-[#3399cc] px-3 py-2 text-xs font-bold text-[#fff] transition-opacity hover:opacity-90">Messages</button>
                           <button type="button" onClick={() => beginEditProject(project, source)} className="rounded border border-[var(--accent)] bg-transparent px-3 py-2 text-xs text-[var(--accent)] transition-colors hover:bg-[var(--accent)]/10">Edit ✎</button>
-                          <button type="button" onClick={() => reissueCredentials(user.id)} className="rounded border border-[var(--border)] bg-transparent px-3 py-2 text-xs text-[var(--text-main)] transition-colors hover:bg-[var(--bg-main)]">Re-issue access</button>
-                          <button type="button" onClick={() => sendRoleReset(user)} className="rounded border border-[var(--border)] bg-transparent px-3 py-2 text-xs text-[var(--text-main)] transition-colors hover:bg-[var(--bg-main)]">Send reset code</button>
+                          {user?.role === 'client' && hasPerm('client_access') && (
+                            <>
+                              <button type="button" onClick={() => reissueCredentials(user.id)} className="rounded border border-[var(--border)] bg-transparent px-3 py-2 text-xs text-[var(--text-main)] transition-colors hover:bg-[var(--bg-main)]">Re-issue access</button>
+                              <button type="button" onClick={() => sendRoleReset(user)} className="rounded border border-[var(--border)] bg-transparent px-3 py-2 text-xs text-[var(--text-main)] transition-colors hover:bg-[var(--bg-main)]">Send reset code</button>
+                            </>
+                          )}
+                          {((['team', 'support'].includes(user?.role) && hasPerm('team'))
+                            || (user?.role === 'superadmin' && adminRole === 'superadmin')) && (
+                            <button type="button" onClick={() => sendRoleReset(user)} className="rounded border border-[var(--border)] bg-transparent px-3 py-2 text-xs text-[var(--text-main)] transition-colors hover:bg-[var(--bg-main)]">Send reset code</button>
+                          )}
                         </>
                       )}
                       <button
@@ -2398,6 +2446,14 @@ const Admin = () => {
                         Delete
                       </button>
                     </div>
+                    {project.previewUrl && (
+                      <div className="mt-4 border-t border-[var(--border)] pt-4">
+                        <LivePreviewTab
+                          previewUrl={project.previewUrl}
+                          projectTitle={project.projectTitle || project.serviceName}
+                        />
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -2839,6 +2895,7 @@ const TEAM_PERMISSIONS = [
   { id: 'reviews', label: 'Reviews', hint: 'Approve, pin, reply and delete reviews' },
   { id: 'skills', label: 'Skills & timeline', hint: 'Skills, experience and education' },
   { id: 'cms', label: 'Website content', hint: 'Site copy, policies and payment settings' },
-  { id: 'team', label: 'Client access', hint: 'Reissue credentials and send reset codes' },
+  { id: 'team', label: 'Team access', hint: 'Manage team accounts and team reset codes' },
+  { id: 'client_access', label: 'Client access', hint: 'Generate or reissue client credentials and reset codes' },
 ];
 const cmsCardStyle = { background: 'var(--bg-card)', padding: '25px', borderRadius: '12px', border: '1px solid var(--border-color)' };

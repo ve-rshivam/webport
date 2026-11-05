@@ -14,6 +14,7 @@ import { createAlertsRouter } from './src/routes/alerts.js';
 import { createQrRouter } from './src/routes/qr.js';
 import { getSupportEmail, sendCredentialsEmail, sendEmail } from './src/services/email.service.js';
 import { provisionFromPayment } from './src/services/provisioning.js';
+import { TEMP_PASSWORD_TTL_MINUTES } from './src/services/auth.service.js';
 import bcrypt from 'bcryptjs';
 import helmet from 'helmet';
 import mongoSanitize from 'express-mongo-sanitize';
@@ -225,7 +226,7 @@ io.use(async (socket, next) => {
   }
 });
 
-app.use('/api/payment', createWebhookRouter({ resolvePaypalPayment, disconnectClientSockets }));
+app.use('/api/payment', createWebhookRouter({ resolvePaypalPayment, disconnectClientSockets, syncClientProjectCredentials: syncLegacyClientProjectCredentials }));
 
 const defaultJsonParser = express.json({ limit: '1mb' });
 app.use((req, res, next) => (req.path === '/api/qr/submit' ? next() : defaultJsonParser(req, res, next)));
@@ -306,10 +307,10 @@ const checkPerm = (validSections) => (req, res, next) => {
 };
 
 // [RATE LIMITER - MESSAGES/OTP]: Admin portal ke OTP aur message routes.
-app.use('/api/portal/admin', createAdminPortalRouter({ verifyAdminToken, checkPerm, otpEmailLimiter, messageLimiter, disconnectClientSockets }));
-app.use('/api/admin/projects', createInvoiceAdminRouter({ verifyAdminToken, checkPerm, disconnectClientSockets }));
+app.use('/api/portal/admin', createAdminPortalRouter({ verifyAdminToken, checkPerm, otpEmailLimiter, messageLimiter, disconnectClientSockets, syncClientProjectCredentials: syncLegacyClientProjectCredentials }));
+app.use('/api/admin/projects', createInvoiceAdminRouter({ verifyAdminToken, checkPerm, disconnectClientSockets, syncClientProjectCredentials: syncLegacyClientProjectCredentials }));
 // [RATE LIMITER - LOGIN/OTP/INVOICE]: Client portal ke auth, OTP, chat aur invoice routes.
-app.use('/api/portal', createPortalRouter({ authLimiter, otpEmailLimiter, messageLimiter, invoiceDownloadLimiter, disconnectClientSockets }));
+app.use('/api/portal', createPortalRouter({ authLimiter, otpEmailLimiter, messageLimiter, invoiceDownloadLimiter, disconnectClientSockets, syncClientProjectCredentials: syncLegacyClientProjectCredentials }));
 // [RATE LIMITER - CONTACT & PORTAL CHAT]: Alerts/abandoned-checkout spam rokne ke liye message limiter.
 app.use('/api/alerts', createAlertsRouter({ limiter: messageLimiter }));
 app.use('/api/qr', createQrRouter({
@@ -318,6 +319,7 @@ app.use('/api/qr', createQrRouter({
   limiter: authLimiter,
   qrUploadLimiter,
   disconnectClientSockets,
+  syncClientProjectCredentials: syncLegacyClientProjectCredentials,
   // [40% FLOOR] Service ka price DB se nikaal ke minimum advance (40% ya minAmount) check karta hai.
   resolveAdvanceFloor: async ({ serviceId, serviceName }) => {
     if (!serviceId && !serviceName) return null;
@@ -372,6 +374,13 @@ const messageSchema = new mongoose.Schema({
   amountPaid: { type: Number, min: 0 },
   attachment: String,
   projectId: { type: String, trim: true },
+  isRemainingPayment: { type: Boolean, default: false },
+  approvedProjectId: { type: String, trim: true },
+  approvalStore: { type: String, enum: ['mongo', 'prisma'] },
+  paymentAppliedAt: Date,
+  approvedAmountPaid: Number,
+  approvedBalanceDue: Number,
+  rejectionEmailSentAt: Date,
   
   date: { type: Date, default: Date.now }
 });
@@ -570,6 +579,8 @@ function normalizeServicePriceUsd(value) {
 }
 
 const projectSchema = new mongoose.Schema({
+  sourcePaymentMessageId: { type: String, trim: true, unique: true, sparse: true },
+  appliedLegacyPaymentMessageIds: { type: [String], default: [] },
   clientEmail: String,
   clientName: String,
   projectTitle: String,
@@ -579,6 +590,7 @@ const projectSchema = new mongoose.Schema({
   status: { type: String, default: 'Pending Verification' }, 
   paymentStatus: { type: String, default: 'Pending' }, 
   deliveryDate: String,
+  previewUrl: { type: String, trim: true },
   notes: String,
   isTemporaryKey: { type: Boolean, default: false }, 
   
@@ -593,12 +605,52 @@ const projectSchema = new mongoose.Schema({
   lastUpdated: { type: Date, default: Date.now }
 });
 const ClientProject = mongoose.model('ClientProject', projectSchema);
+async function syncLegacyClientProjectCredentials({ email, passwordHash, isTemporaryKey }) {
+  const normalizedEmail = String(email ?? '').trim();
+  if (!normalizedEmail || !passwordHash) throw new Error('Client email and password hash are required to sync legacy projects.');
+  const escapedEmail = normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return ClientProject.updateMany(
+    { clientEmail: { $regex: `^${escapedEmail}$`, $options: 'i' } },
+    { $set: { hashedAccessKey: passwordHash, isTemporaryKey: Boolean(isTemporaryKey) } }
+  );
+}
+async function setPortalTemporaryPassword(email, passwordHash) {
+  const normalizedEmail = String(email ?? '').trim().toLowerCase();
+  if (!normalizedEmail || !passwordHash) return null;
+  const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+  if (!user) return null;
+  if (user.role !== 'client') throw new Error('Refusing to replace credentials for a non-client account.');
+  const updated = await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      passwordHash: null,
+      passwordUpdatedAt: new Date(),
+      tempPasswordHash: passwordHash,
+      tempPasswordExpiry: new Date(Date.now() + TEMP_PASSWORD_TTL_MINUTES * 60 * 1000),
+      tempPasswordAttempts: 0,
+      mustChangePassword: true,
+      resetOtpHash: null,
+      resetOtpExpiry: null,
+      resetOtpAttempts: 0,
+      sessionToken: null,
+      sessionTokenExpiry: null,
+      sessionFingerprint: null,
+      sessionUserAgent: null,
+      sessionIp: null,
+      lastActiveAt: null,
+    },
+  });
+  disconnectClientSockets(updated.id);
+  return updated;
+}
 app.use(
   '/api/admin/client-projects',
   createManualClientProjectRouter({
     verifyAdminToken,
     checkPerm,
     getLegacyProjectModel: () => ClientProject,
+    disconnectClientSockets,
+    syncClientProjectCredentials: syncLegacyClientProjectCredentials,
   })
 );
 
@@ -1025,6 +1077,7 @@ app.post('/api/messages', messageLimiter, async (req, res) => {
       transaction_id,
       attachment,
       projectId,
+      isRemainingPayment: isRemainingPayment === true || isRemainingPayment === 'true',
       ...(type === 'payment' ? { amountPaid: parsedAmountPaid } : {}),
     });
     await newMessage.save();
@@ -1310,7 +1363,7 @@ app.post('/api/payment/razorpay-verify', authLimiter, async (req, res) => {
         status: payment.status ?? null,
         verifiedBy: 'checkout-callback',
       },
-    }, disconnectClientSockets);
+    }, { disconnectClientSockets, syncClientProjectCredentials: syncLegacyClientProjectCredentials });
 
     if (!result.duplicate && result.project) {
       const isRemainingPayment = String(notes.isRemainingPayment) === 'true';
@@ -1405,7 +1458,7 @@ app.post('/api/payment/paypal-verify', paymentOrderLimiter, async (req, res) => 
         currency: capture.currency,
         verifiedBy: 'server-capture',
       },
-    }, disconnectClientSockets);
+    }, { disconnectClientSockets, syncClientProjectCredentials: syncLegacyClientProjectCredentials });
 
     if (!result.duplicate && result.project) {
       emitProjectMutation(req, capture.isRemainingPayment ? 'updated' : 'created', result.project, {
@@ -1524,6 +1577,7 @@ app.post('/api/client/login', authLimiter, async (req, res) => {
         clientName:     p.clientName,
         clientEmail:    p.clientEmail,
         projectTitle:   p.projectTitle,
+        previewUrl:     p.previewUrl || '',
         status:         p.status,
         progress:       p.progress,
         paymentStatus:  p.paymentStatus,
@@ -1566,15 +1620,15 @@ app.post('/api/client/forgot-password', otpEmailLimiter, async (req, res) => {
     const hashedOtp = await bcrypt.hash(otp, salt);
 
     // Keep reset state on one deterministic project record so multiple projects cannot multiply OTP attempts.
+    const escapedEmail = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     await ClientProject.updateMany(
-      { clientEmail: email },
+      { clientEmail: { $regex: `^${escapedEmail}$`, $options: 'i' } },
       {
         $set: {
           resetOtp: null,
           otpExpiry: null,
           otpAttempts: 0,
           lastPasswordReset: new Date(),
-          isTemporaryKey: false
         }
       }
     );
@@ -1663,8 +1717,9 @@ app.post('/api/client/reset-password-with-otp', otpEmailLimiter, async (req, res
     const salt = await bcrypt.genSalt(10);
     const hashedNewKey = await bcrypt.hash(newKey, salt);
 
+    const escapedEmail = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     await ClientProject.updateMany(
-      { clientEmail: email },
+      { clientEmail: { $regex: `^${escapedEmail}$`, $options: 'i' } },
       {
         $set: {
           hashedAccessKey: hashedNewKey,
@@ -1675,6 +1730,31 @@ app.post('/api/client/reset-password-with-otp', otpEmailLimiter, async (req, res
         }
       }
     );
+
+    const portalUser = await prisma.user.findUnique({ where: { email } }).catch(() => null);
+    if (portalUser) {
+      await prisma.user.update({
+        where: { id: portalUser.id },
+        data: {
+          passwordHash: hashedNewKey,
+          passwordUpdatedAt: new Date(),
+          mustChangePassword: false,
+          tempPasswordHash: null,
+          tempPasswordExpiry: null,
+          tempPasswordAttempts: 0,
+          resetOtpHash: null,
+          resetOtpExpiry: null,
+          resetOtpAttempts: 0,
+          sessionToken: null,
+          sessionTokenExpiry: null,
+          sessionFingerprint: null,
+          sessionUserAgent: null,
+          sessionIp: null,
+          lastActiveAt: null,
+        },
+      });
+      disconnectClientSockets(portalUser.id);
+    }
 
     res.json({ success: true, message: "New access key saved." });
   } catch (err) {
@@ -1794,7 +1874,7 @@ app.delete('/api/admin/team/:id', verifyAdminToken, async (req, res) => {
 
 // [RATE LIMITER - OTP & EMAIL QUOTA]: Bulk credential emails se email quota khatam hone se rokne ke liye.
 // [RATE LIMITER - OTP/EMAIL]: Credential resend email quota bachane ke liye.
-app.post('/api/auth/send-credentials', otpEmailLimiter, verifyAdminToken, checkPerm(['team', 'projects']), async (req, res) => {
+app.post('/api/auth/send-credentials', otpEmailLimiter, verifyAdminToken, checkPerm(['client_access']), async (req, res) => {
   const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
   try {
@@ -2026,6 +2106,7 @@ const LEGACY_PROJECT_FIELDS = [
   'clientName',
   'clientEmail',
   'projectTitle',
+  'previewUrl',
   'serviceName',
   'status',
   'progress',
@@ -2151,192 +2232,503 @@ app.post('/api/client-projects/:id/message', verifyAdminToken, checkPerm(['proje
   }
 });
 
-app.post('/api/admin/verify-client-payment/:id', verifyAdminToken, checkPerm(['payments']), async (req, res) => {
+async function createUniqueLegacyAccessKey() {
+  const query = { hashedAccessKey: { $type: 'string', $ne: '' } };
+  const keyRecords = await ClientProject.find(query).select('hashedAccessKey').lean();
+  const allHashes = keyRecords
+    .map((record) => record.hashedAccessKey)
+    .filter((hash) => typeof hash === 'string' && hash.length > 0);
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const rawAccessKey = crypto.randomBytes(6).toString('hex').toUpperCase();
+    let collision = false;
+    for (const hashedAccessKey of allHashes) {
+      try {
+        if (await bcrypt.compare(rawAccessKey, hashedAccessKey)) {
+          collision = true;
+          break;
+        }
+      } catch {
+        // Ignore malformed legacy hashes; they cannot match a generated key.
+      }
+    }
+    if (!collision) {
+      return { rawAccessKey, hashedKey: await bcrypt.hash(rawAccessKey, 10) };
+    }
+  }
+
+  throw new Error('Could not generate a unique access key.');
+}
+
+async function findProjectByIdAcrossStores(id, preferredStore = null) {
+  const projectId = String(id ?? '').trim();
+  if (!projectId) return null;
+
+  const stores = preferredStore === 'prisma'
+    ? ['prisma', 'mongo']
+    : ['mongo', 'prisma'];
+  for (const store of stores) {
+    try {
+      if (store === 'mongo' && mongoose.Types.ObjectId.isValid(projectId)) {
+        const project = await ClientProject.findById(projectId);
+        if (project) return { store, project };
+      } else if (store === 'prisma') {
+        const project = await prisma.clientProject.findUnique({ where: { id: projectId } });
+        if (project) return { store, project };
+      }
+    } catch (error) {
+      console.warn(`[payment] ${store} project lookup failed:`, error?.message ?? error);
+    }
+  }
+  return null;
+}
+
+async function findOutstandingProjectByEmail(email) {
+  try {
+    const escapedEmail = String(email).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const project = await ClientProject.findOne({
+      clientEmail: { $regex: `^${escapedEmail}$`, $options: 'i' },
+      balanceDue: { $gt: 0 },
+    }).sort({ _id: -1 });
+    if (project) return { store: 'mongo', project };
+  } catch (error) {
+    console.warn('[payment] Mongo project lookup by email failed:', error?.message ?? error);
+  }
+
+  try {
+    const project = await prisma.clientProject.findFirst({
+      where: {
+        clientEmail: { equals: email, mode: 'insensitive' },
+        balanceDue: { gt: 0 },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (project) return { store: 'prisma', project };
+  } catch (error) {
+    console.warn('[payment] Prisma project lookup by email failed:', error?.message ?? error);
+  }
+  return null;
+}
+
+async function findProjectForLegacyPayment(messageId, email) {
+  const normalizedMessageId = String(messageId);
+  try {
+    const project = await ClientProject.findOne({
+      $or: [
+        { appliedLegacyPaymentMessageIds: normalizedMessageId },
+        { sourcePaymentMessageId: normalizedMessageId },
+      ],
+    });
+    if (project) return { store: 'mongo', project };
+  } catch (error) {
+    console.warn('[payment] Mongo prior-payment lookup failed:', error?.message ?? error);
+  }
+
+  try {
+    const payment = await prisma.payment.findUnique({
+      where: {
+        gateway_transactionId: {
+          gateway: 'manual',
+          transactionId: `legacy-payment-message:${normalizedMessageId}`,
+        },
+      },
+      include: { project: true },
+    });
+    if (payment?.project && (!email || payment.project.clientEmail.toLowerCase() === email.toLowerCase())) {
+      return { store: 'prisma', project: payment.project };
+    }
+  } catch (error) {
+    console.warn('[payment] Prisma prior-payment lookup failed:', error?.message ?? error);
+  }
+  return null;
+}
+
+app.post('/api/admin/verify-client-payment/:id', verifyAdminToken, checkPerm(['payments']), checkPerm(['client_access']), async (req, res) => {
   try {
     const project = await ClientProject.findById(req.params.id);
-    if(!project) return res.status(404).json({ success: false, message: "Project not found" });
+    if (!project) return res.status(404).json({ success: false, message: 'Project not found' });
 
-    
-    let rawAccessKey = "Same as existing Access Key";
-    
-    const otherProjects = await ClientProject.find({ clientEmail: project.clientEmail, _id: { $ne: project._id } });
-    if (otherProjects && otherProjects.length > 0) {
-        
-        project.hashedAccessKey = otherProjects[0].hashedAccessKey;
-    } else {
-        rawAccessKey = crypto.randomBytes(6).toString('hex').toUpperCase();
-        const salt = await bcrypt.genSalt(10);
-        project.hashedAccessKey = await bcrypt.hash(rawAccessKey, salt);
-    }
-
+    const { rawAccessKey, hashedKey } = await createUniqueLegacyAccessKey();
+    await syncLegacyClientProjectCredentials({ email: project.clientEmail, passwordHash: hashedKey, isTemporaryKey: true });
+    await setPortalTemporaryPassword(project.clientEmail, hashedKey);
+    project.hashedAccessKey = hashedKey;
+    project.isTemporaryKey = true;
     project.isPaymentVerified = true;
     project.paymentStatus = req.body.paymentStatus || 'Verified/Paid';
     project.status = 'Development Phase';
     await project.save();
     emitProjectMutation(req, 'updated', project, { source: 'legacy' });
 
+    let deliveryResult = null;
     try {
-      await safeSend({
+      deliveryResult = await safeSend({
         from: senderEmail,
         to: project.clientEmail,
-        subject: "🎉 Payment Verified - Your Project Access Key",
-        html: `<h3>Hi ${project.clientName},</h3><p>Your payment for <strong>${project.projectTitle}</strong> has been successfully verified.</p><p>You can now track your project's live progress on our portal.</p><br><p><strong>Login Email:</strong> ${project.clientEmail}</p><p><strong>Secure Access Key:</strong> <span style="font-size:24px; color:#00e5ff; font-weight:bold; letter-spacing: 4px;">${rawAccessKey}</span></p><br><p><em>Note: For security reasons, do not share it with anyone!</em></p><br><p><em>Forgot or want to change your Access Key? <a href="${process.env.FRONTEND_URL || 'https://rshivam.dev'}/portal">Click here to Reset Password</a></em></p>`
+        subject: 'Payment verified — temporary project portal access',
+        plainPasscode: rawAccessKey,
+        html: `<h3>Hi ${escapeHtml(project.clientName || 'there')},</h3><p>Your payment for <strong>${escapeHtml(project.projectTitle || 'your project')}</strong> has been verified.</p><p>Portal: <a href="${escapeHtml(process.env.FRONTEND_URL || 'https://rshivam.dev')}/portal">Client Portal</a></p><p>Login email: <strong>${escapeHtml(project.clientEmail)}</strong></p><p>Temporary access key: <strong>${escapeHtml(rawAccessKey)}</strong></p><p>Sign in and set a permanent password. This key expires in 72 hours.</p>`,
+        text: `Payment verified for ${project.projectTitle || 'your project'}. Sign in at ${process.env.FRONTEND_URL || 'https://rshivam.dev'}/portal with ${project.clientEmail} and temporary access key ${rawAccessKey}. Set a permanent password within 72 hours.`,
       });
-    } catch(mailErr) {
-       console.log("Email failed, but key was generated.");
+    } catch (mailError) {
+      console.error('[payment] Access-key email failed:', mailError?.message ?? mailError);
     }
 
-    res.json({ success: true, message: "Payment Verified & Access Key Generated!" });
-  } catch(err) {
-    res.status(500).json({ success: false, message: "Verification failed." });
+    const emailSent = Boolean(deliveryResult?.success && !deliveryResult?.manualRequired);
+    res.json({
+      success: true,
+      emailSent,
+      manualPasscode: emailSent ? undefined : rawAccessKey,
+      message: emailSent
+        ? 'Payment verified and a new access key was emailed.'
+        : 'Payment verified, but email delivery failed. Copy the new access key and retry delivery if needed.',
+    });
+  } catch (err) {
+    console.error('[payment] Verification failed:', err?.message ?? err);
+    res.status(500).json({ success: false, message: 'Verification failed.' });
   }
 });
 
 app.post('/api/admin/approve-payment-message/:msgId', verifyAdminToken, checkPerm(['payments']), async (req, res) => {
   try {
     const msg = await Message.findById(req.params.msgId);
-    if (!msg) return res.status(404).json({ success: false, message: "Message not found" });
-    if (msg.type !== 'payment') return res.status(404).json({ success: false, message: "Payment request not found" });
+    if (!msg) return res.status(404).json({ success: false, message: 'Message not found' });
+    if (msg.type !== 'payment') return res.status(404).json({ success: false, message: 'Payment request not found' });
 
     const paymentAmount = Number(msg.amountPaid);
     if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
-      return res.status(400).json({ success: false, message: "This payment request has no valid amount. Ask the client to resubmit it." });
+      return res.status(400).json({ success: false, message: 'This payment request has no valid amount. Ask the client to resubmit it.' });
     }
 
-  
-    if (msg.projectId) {
-        const project = await ClientProject.findById(msg.projectId);
-        if (!project) return res.status(404).json({ success: false, message: "Project not found" });
-        if (String(project.clientEmail ?? '').trim().toLowerCase() !== String(msg.email ?? '').trim().toLowerCase()) {
-            return res.status(403).json({ success: false, message: "Payment request does not belong to this project." });
+    let normalizedEmail = String(msg.email ?? '').trim().toLowerCase();
+    const remainingPayment = msg.isRemainingPayment === true
+      || Boolean(String(msg.projectId ?? '').trim())
+      || /\[REMAINING BALANCE PAYMENT\]/i.test(String(msg.message ?? ''));
+    if (!remainingPayment && req.admin.role !== 'superadmin' && !req.admin.permissions?.includes('client_access')) {
+      return res.status(403).json({ success: false, message: 'Creating client access requires the client_access permission.' });
+    }
+    const portalUrl = `${String(process.env.FRONTEND_URL || 'https://rshivam.dev').replace(/\/+$/, '')}/portal`;
+
+    if (remainingPayment) {
+      let target = null;
+      if (msg.paymentAppliedAt && msg.approvedProjectId) {
+        target = await findProjectByIdAcrossStores(msg.approvedProjectId, msg.approvalStore);
+      }
+      if (!target && msg.projectId) target = await findProjectByIdAcrossStores(msg.projectId);
+      if (!target) target = await findOutstandingProjectByEmail(normalizedEmail);
+      if (!target) target = await findProjectForLegacyPayment(msg._id, normalizedEmail);
+      if (!target) return res.status(404).json({ success: false, message: 'No project with an outstanding balance was found for this payment.' });
+
+      const project = target.project;
+      if (!normalizedEmail) normalizedEmail = String(project.clientEmail ?? '').trim().toLowerCase();
+      if (String(project.clientEmail ?? '').trim().toLowerCase() !== normalizedEmail) {
+        return res.status(403).json({ success: false, message: 'Payment request does not belong to this project.' });
+      }
+
+      let nextAmountPaid = Number(msg.approvedAmountPaid);
+      let nextBalanceDue = Number(msg.approvedBalanceDue);
+      let priorPayment = false;
+      if (target.store === 'mongo') {
+        priorPayment = Array.isArray(project.appliedLegacyPaymentMessageIds)
+          && project.appliedLegacyPaymentMessageIds.includes(String(msg._id));
+      } else {
+        priorPayment = Boolean(await prisma.payment.findUnique({
+          where: {
+            gateway_transactionId: {
+              gateway: 'manual',
+              transactionId: `legacy-payment-message:${String(msg._id)}`,
+            },
+          },
+          select: { id: true },
+        }));
+      }
+      const alreadyApplied = Boolean(msg.paymentAppliedAt || priorPayment);
+      if (alreadyApplied && (!Number.isFinite(nextAmountPaid) || !Number.isFinite(nextBalanceDue))) {
+        nextAmountPaid = Number(project.amountPaid ?? 0);
+        nextBalanceDue = Number(project.balanceDue ?? 0);
+      }
+      if (!alreadyApplied) {
+        const totalCost = Number(project.totalCost ?? 0);
+        const currentAmountPaid = Number(project.amountPaid ?? 0);
+        const outstanding = Math.max(totalCost - currentAmountPaid, 0);
+        if (!Number.isFinite(totalCost) || totalCost <= 0 || outstanding <= 0 || paymentAmount > outstanding) {
+          return res.status(400).json({ success: false, message: 'Payment amount exceeds the outstanding project balance.' });
         }
-        const outstanding = Math.max(Number(project.totalCost ?? 0) - Number(project.amountPaid ?? 0), 0);
-        if (paymentAmount > outstanding || outstanding <= 0) {
-            return res.status(400).json({ success: false, message: "Payment amount exceeds the outstanding project balance." });
-        }
-        const nextAmountPaid = Number(project.amountPaid ?? 0) + paymentAmount;
-        const nextBalanceDue = Math.max(Number(project.totalCost ?? 0) - nextAmountPaid, 0);
-        project.amountPaid = nextAmountPaid;
-        project.balanceDue = nextBalanceDue;
-        project.isPaymentVerified = true;
-        project.paymentStatus = nextBalanceDue === 0
+
+        nextAmountPaid = currentAmountPaid + paymentAmount;
+        nextBalanceDue = Math.max(totalCost - nextAmountPaid, 0);
+        const paymentStatus = nextBalanceDue === 0
           ? 'Fully Paid'
-          : `Advance Paid (${Math.round((nextAmountPaid / Math.max(Number(project.totalCost ?? 0), 1)) * 100)}%)`;
-            await project.save();
-            emitProjectMutation(req, 'updated', project, { source: 'legacy' });
-            await Message.findByIdAndDelete(req.params.msgId);
-            
-            try {
-              await safeSend({
-                from: senderEmail,
-                to: msg.email,
-                subject: "🎉 Remaining Balance Verified",
-                html: `<h3>Hi ${escapeHtml(msg.name)},</h3><p>Your payment of ${escapeHtml(paymentAmount)} has been verified. Remaining balance: ${escapeHtml(nextBalanceDue)}.</p><br><p><em>Forgot or want to change your Access Key? <a href="${escapeHtml(process.env.FRONTEND_URL || 'https://rshivam.dev')}/portal">Click here to Reset Password</a></em></p>`
-              });
-            } catch(e) {}
+          : `Partial (${Math.round((nextAmountPaid / totalCost) * 100)}%)`;
+        const paymentUpdate = {
+          amountPaid: nextAmountPaid,
+          balanceDue: nextBalanceDue,
+          isPaymentVerified: true,
+          paymentStatus,
+          lastUpdated: new Date(),
+        };
 
-            return res.json({ success: true, message: "Remaining Balance Verified Successfully!" });
+        if (target.store === 'mongo') {
+          const updatedProject = await ClientProject.findOneAndUpdate(
+            {
+              _id: project._id,
+              amountPaid: currentAmountPaid,
+              appliedLegacyPaymentMessageIds: { $ne: String(msg._id) },
+            },
+            {
+              $set: paymentUpdate,
+              $addToSet: { appliedLegacyPaymentMessageIds: String(msg._id) },
+            },
+            { new: true }
+          );
+          if (!updatedProject) {
+            const reread = await ClientProject.findById(project._id);
+            if (reread?.appliedLegacyPaymentMessageIds?.includes(String(msg._id))) {
+              nextAmountPaid = Number(reread.amountPaid ?? 0);
+              nextBalanceDue = Number(reread.balanceDue ?? 0);
+              target.project = reread;
+              priorPayment = true;
+            } else {
+              return res.status(409).json({ success: false, message: 'Project payment changed concurrently. Refresh and review the balance.' });
+            }
+          } else {
+            target.project = updatedProject;
+          }
+        } else {
+          const transactionId = `legacy-payment-message:${String(msg._id)}`;
+          try {
+            target.project = await prisma.$transaction(async (tx) => {
+              const updatedCount = await tx.clientProject.updateMany({
+                where: { id: project.id, amountPaid: currentAmountPaid },
+                data: paymentUpdate,
+              });
+              if (updatedCount.count !== 1) throw new Error('PROJECT_PAYMENT_CHANGED');
+              await tx.payment.create({
+                data: {
+                  gateway: 'manual',
+                  transactionId,
+                  status: 'captured',
+                  amount: paymentAmount,
+                  currency: 'INR',
+                  email: normalizedEmail,
+                  name: msg.name || null,
+                  projectId: project.id,
+                  details: { legacyMessageId: String(msg._id) },
+                },
+              });
+              return tx.clientProject.findUnique({ where: { id: project.id } });
+            });
+          } catch (transactionError) {
+            if (transactionError?.message === 'PROJECT_PAYMENT_CHANGED') {
+              return res.status(409).json({ success: false, message: 'Project payment changed concurrently. Refresh and review the balance.' });
+            }
+            if (transactionError?.code === 'P2002') {
+              const appliedProject = await prisma.clientProject.findUnique({ where: { id: project.id } });
+              const appliedPayment = await prisma.payment.findUnique({
+                where: { gateway_transactionId: { gateway: 'manual', transactionId } },
+                select: { id: true },
+              });
+              if (!appliedPayment || !appliedProject) throw transactionError;
+              target.project = appliedProject;
+              nextAmountPaid = Number(appliedProject.amountPaid ?? 0);
+              nextBalanceDue = Number(appliedProject.balanceDue ?? 0);
+              priorPayment = true;
+            } else {
+              throw transactionError;
+            }
+          }
+        }
+
+      }
+
+      if (!msg.paymentAppliedAt) {
+        msg.approvedProjectId = String(target.project._id ?? target.project.id);
+        msg.approvalStore = target.store;
+        msg.paymentAppliedAt = new Date();
+        msg.approvedAmountPaid = Number.isFinite(nextAmountPaid) ? nextAmountPaid : Number(target.project.amountPaid ?? 0);
+        msg.approvedBalanceDue = Number.isFinite(nextBalanceDue) ? nextBalanceDue : Number(target.project.balanceDue ?? 0);
+        await msg.save();
+      }
+      if (!alreadyApplied && !priorPayment) emitProjectMutation(req, 'updated', target.project, { source: 'legacy' });
+
+      let emailSent = false;
+      try {
+        const receiptResult = await safeSend({
+          from: senderEmail,
+          to: normalizedEmail,
+          subject: 'Payment received — project balance updated',
+          html: `<h3>Hi ${escapeHtml(msg.name || 'there')},</h3><p>Your payment of <strong>₹${escapeHtml(paymentAmount)}</strong> has been verified for <strong>${escapeHtml(project.projectTitle || 'your project')}</strong>.</p><p>Total paid: ₹${escapeHtml(nextAmountPaid)}<br>Balance due: ₹${escapeHtml(nextBalanceDue)}</p><p>Track your project in the <a href="${escapeHtml(portalUrl)}">client portal</a>.</p>`,
+          text: `Your payment of ₹${paymentAmount} has been verified for ${project.projectTitle || 'your project'}. Total paid: ₹${nextAmountPaid}; balance due: ₹${nextBalanceDue}. Portal: ${portalUrl}`,
+        });
+        emailSent = Boolean(receiptResult?.success && !receiptResult?.manualRequired);
+      } catch (mailError) {
+        console.error('[payment] Remaining-payment receipt email failed:', mailError?.message ?? mailError);
+      }
+
+      if (emailSent) await Message.findByIdAndDelete(req.params.msgId);
+      return res.json({
+        success: true,
+        emailSent,
+        message: emailSent
+          ? 'Remaining balance payment verified and receipt emailed.'
+          : 'Payment was applied once, but receipt email failed. This request is retained for retry.',
+      });
     }
 
-   
-    let rawAccessKey = "Same as existing Access Key";
-    let hashedKey = "";
     const totalCost = Number(req.body?.totalCost);
     if (!Number.isFinite(totalCost) || totalCost <= 0 || totalCost < paymentAmount) {
-      return res.status(400).json({ success: false, message: "A total project valuation at least as large as the verified payment is required." });
+      return res.status(400).json({ success: false, message: 'A total project valuation at least as large as the verified payment is required.' });
     }
-    const balanceDue = Math.max(totalCost - paymentAmount, 0);
-    const projectPaymentStatus = balanceDue === 0
-      ? 'Fully Paid'
-      : `Advance Paid (${Math.round((paymentAmount / totalCost) * 100)}%)`;
-    
-    const existingProject = await ClientProject.findOne({ clientEmail: msg.email });
-    if (existingProject) {
-        hashedKey = existingProject.hashedAccessKey;
-    } else {
-        rawAccessKey = crypto.randomBytes(6).toString('hex').toUpperCase();
-        const salt = await bcrypt.genSalt(10);
-        hashedKey = await bcrypt.hash(rawAccessKey, salt);
+    if (!normalizedEmail) return res.status(400).json({ success: false, message: 'A valid client email is required.' });
+
+    let project = null;
+    let projectWasNew = false;
+    if (msg.approvedProjectId) {
+      const existingTarget = await findProjectByIdAcrossStores(msg.approvedProjectId, msg.approvalStore);
+      project = existingTarget?.store === 'mongo' ? existingTarget.project : null;
     }
+    if (!project) project = await ClientProject.findOne({ sourcePaymentMessageId: String(msg._id) });
 
-    const newProject = new ClientProject({
-      clientEmail: msg.email,
-      clientName: msg.name,
-      projectTitle: msg.message.split('|')[0] || "Custom Project",
-      hashedAccessKey: hashedKey,
-      isPaymentVerified: true,
-      paymentStatus: projectPaymentStatus,
-      totalCost,
-      amountPaid: paymentAmount,
-      balanceDue,
-      status: 'Development Started',
-      progress: 10
-    });
-    await newProject.save();
-    emitProjectMutation(req, 'created', newProject, { source: 'legacy' });
-
-    try {
-      await safeSend({
-        from: senderEmail,
-        to: msg.email,
-        subject: "🎉 Payment Verified - Portal Login Details",
-        html: `<h3>Hi ${escapeHtml(msg.name)},</h3><p>Your payment is verified. Track your project here: <a href="${escapeHtml(process.env.FRONTEND_URL || 'https://rshivam.dev')}/portal">Client Portal</a></p><p>Email: <b>${escapeHtml(msg.email)}</b></p><p>Access Key: <b style="color:#00e5ff; font-size:20px;">${escapeHtml(rawAccessKey)}</b></p><br><p><em>Forgot or want to change your Access Key? <a href="${escapeHtml(process.env.FRONTEND_URL || 'https://rshivam.dev')}/portal">Click here to Reset Password</a></em></p>`
+    const balanceDue = project
+      ? Math.max(Number(project.totalCost ?? 0) - Number(project.amountPaid ?? 0), 0)
+      : Math.max(totalCost - paymentAmount, 0);
+    if (!project) {
+      projectWasNew = true;
+      const paymentStatus = balanceDue === 0
+        ? 'Fully Paid'
+        : `Partial (${Math.round((paymentAmount / totalCost) * 100)}%)`;
+      project = new ClientProject({
+        sourcePaymentMessageId: String(msg._id),
+        clientEmail: normalizedEmail,
+        clientName: msg.name,
+        projectTitle: String(msg.message ?? '').split('|')[0]?.trim() || 'Custom Project',
+        isPaymentVerified: true,
+        paymentStatus,
+        totalCost,
+        amountPaid: paymentAmount,
+        balanceDue,
+        status: 'Development Started',
+        progress: 10,
       });
-    } catch(mailErr) {
-      // [H3] Credential kabhi log nahi karte — sirf message id.
     }
 
-    await Message.findByIdAndDelete(req.params.msgId);
-    res.json({ success: true, message: "Payment Verified, Project Created & Key Sent!" });
-  } catch(err) {
-    res.status(500).json({ success: false, message: "Server error during verification." });
+    const { rawAccessKey, hashedKey } = await createUniqueLegacyAccessKey();
+    project.hashedAccessKey = hashedKey;
+    project.isPaymentVerified = true;
+    project.isTemporaryKey = true;
+    if (projectWasNew) {
+      project.totalCost = totalCost;
+      project.amountPaid = paymentAmount;
+      project.balanceDue = balanceDue;
+    }
+    try {
+      await project.save();
+    } catch (saveError) {
+      if (saveError?.code !== 11000 || !project.sourcePaymentMessageId) throw saveError;
+      project = await ClientProject.findOne({ sourcePaymentMessageId: String(msg._id) });
+      if (!project) throw saveError;
+      project.hashedAccessKey = hashedKey;
+      project.isPaymentVerified = true;
+      project.isTemporaryKey = true;
+      await project.save();
+    }
+    await syncLegacyClientProjectCredentials({ email: normalizedEmail, passwordHash: hashedKey, isTemporaryKey: true });
+    await setPortalTemporaryPassword(normalizedEmail, hashedKey);
+    msg.approvedProjectId = String(project._id);
+    msg.approvalStore = 'mongo';
+    msg.paymentAppliedAt = msg.paymentAppliedAt || new Date();
+    msg.approvedAmountPaid = Number(project.amountPaid ?? paymentAmount);
+    msg.approvedBalanceDue = Number(project.balanceDue ?? balanceDue);
+    await msg.save();
+    emitProjectMutation(req, projectWasNew ? 'created' : 'updated', project, { source: 'legacy' });
+
+    let emailSent = false;
+    try {
+      const deliveryResult = await safeSend({
+        from: senderEmail,
+        to: normalizedEmail,
+        subject: 'Payment verified — temporary project portal access',
+        plainPasscode: rawAccessKey,
+        html: `<h3>Hi ${escapeHtml(msg.name || 'there')},</h3><p>Your initial payment has been verified and your project has been created.</p><p>Project: <strong>${escapeHtml(project.projectTitle || 'Custom Project')}</strong><br>Total valuation: ₹${escapeHtml(project.totalCost)}<br>Paid: ₹${escapeHtml(project.amountPaid)}<br>Balance due: ₹${escapeHtml(project.balanceDue)}</p><p>Portal: <a href="${escapeHtml(portalUrl)}">${escapeHtml(portalUrl)}</a></p><p>Login email: <strong>${escapeHtml(normalizedEmail)}</strong><br>Temporary access key: <strong>${escapeHtml(rawAccessKey)}</strong></p><p>Sign in and set a permanent password. This key expires in 72 hours.</p>`,
+        text: `Payment verified. Project: ${project.projectTitle || 'Custom Project'}. Total: ₹${project.totalCost}; paid: ₹${project.amountPaid}; balance: ₹${project.balanceDue}. Portal: ${portalUrl}. Login email: ${normalizedEmail}. Temporary access key: ${rawAccessKey}. Set a permanent password within 72 hours.`,
+      });
+      emailSent = Boolean(deliveryResult?.success && !deliveryResult?.manualRequired);
+    } catch (mailError) {
+      console.error('[payment] Initial payment credential email failed:', mailError?.message ?? mailError);
+    }
+
+    if (emailSent) await Message.findByIdAndDelete(req.params.msgId);
+    return res.json({
+      success: true,
+      emailSent,
+      ...(emailSent ? {} : { manualPasscode: rawAccessKey }),
+      message: emailSent
+        ? 'Payment verified, project created, and access details emailed.'
+        : 'Payment verified and project created, but email failed. Copy the access key and retry delivery.',
+    });
+  } catch (err) {
+    console.error('[payment] Approval failed:', err?.message ?? err);
+    res.status(500).json({ success: false, message: 'Server error during verification.' });
   }
 });
 
 app.post('/api/admin/reject-payment-message/:msgId', verifyAdminToken, checkPerm(['payments']), async (req, res) => {
   try {
     const msg = await Message.findById(req.params.msgId);
-    if (!msg) return res.status(404).json({ success: false, message: "Message not found" });
-    if (msg.type !== 'payment') return res.status(404).json({ success: false, message: "Payment request not found" });
-
-    const rejectReason = req.body.reason || "Invalid Transaction ID or Unclear Screenshot";
-    const rejectedTitle = escapeHtml(String(msg.message ?? '').split('|')[0] || 'your project');
-    const safeRejectReason = escapeHtml(rejectReason);
-
-    try {
-      await safeSend({
-        from: senderEmail,
-        to: msg.email,
-        subject: "⚠️ Action Required: Payment Verification Failed",
-        html: `
-          <div style="font-family: Arial, sans-serif; padding: 20px; background: #fffcfc; border-radius: 10px; border: 1px solid #ffcccc;">
-            <h2 style="color: #ff4d4d; margin-top: 0;">Payment Verification Failed</h2>
-            <p style="color: #333; font-size: 16px;">Hi ${escapeHtml(msg.name)},</p>
-            <p style="color: #555; font-size: 15px;">We were unable to verify your recent manual payment for <strong>${rejectedTitle}</strong> (Transaction ID: ${escapeHtml(msg.transaction_id)}).</p>
-            
-            <div style="background: #fff; padding: 15px; border-left: 4px solid #ff4d4d; margin: 20px 0;">
-              <p style="margin: 0; font-size: 14px; color: #777;">Reason for rejection:</p>
-              <p style="margin: 5px 0 0 0; color: #333; font-weight: bold;">${safeRejectReason}</p>
-            </div>
-
-            <h3 style="color: #333;">What to do next?</h3>
-            <p style="color: #555; font-size: 15px;">Please contact our support team immediately with a valid payment proof (clear screenshot) so we can resolve this issue.</p>
-            
-            <a href="mailto:${escapeHtml(getSupportEmail())}" style="display: inline-block; padding: 10px 20px; background: #ff4d4d; color: #fff; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 10px;">Contact Support</a>
-            
-            <br/><br/>
-            <p style="color: #555; font-size: 14px;">Regards,<br/><strong>Shivam Web Studio</strong></p>
-          </div>
-        `
-      });
-    } catch(mailErr) {
-      console.log("Failed to send rejection email.", mailErr);
+    if (!msg) return res.status(404).json({ success: false, message: 'Message not found' });
+    if (msg.type !== 'payment') return res.status(404).json({ success: false, message: 'Payment request not found' });
+    if (msg.paymentAppliedAt || await findProjectForLegacyPayment(msg._id, String(msg.email ?? '').trim().toLowerCase())) {
+      return res.status(409).json({ success: false, message: 'This payment has already been approved and applied.' });
     }
 
-    await Message.findByIdAndDelete(req.params.msgId);
-    res.json({ success: true, message: "Payment Rejected & Client Emailed Successfully!" });
-  } catch(err) {
-    res.status(500).json({ success: false, message: "Server error during rejection." });
+    const rejectReason = String(req.body?.reason ?? '').trim()
+      || 'Invalid transaction ID, mismatched amount, or unclear proof of payment.';
+    let recipientEmail = String(msg.email ?? '').trim();
+    if (!recipientEmail && msg.projectId) {
+      const linkedProject = await findProjectByIdAcrossStores(msg.projectId);
+      recipientEmail = String(linkedProject?.project?.clientEmail ?? '').trim();
+    }
+
+    let emailSent = Boolean(msg.rejectionEmailSentAt);
+    if (!emailSent && recipientEmail) {
+      const rejectedTitle = escapeHtml(String(msg.message ?? '').split('|')[0] || 'your project');
+      const safeRejectReason = escapeHtml(rejectReason);
+      const portalUrl = `${String(process.env.FRONTEND_URL || 'https://rshivam.dev').replace(/\/+$/, '')}/portal`;
+      try {
+        const result = await safeSend({
+          from: senderEmail,
+          to: recipientEmail,
+          subject: 'Action required: payment verification failed',
+          html: `<div style="font-family:Arial,sans-serif;padding:24px;color:#17140f"><h2>Payment verification failed</h2><p>Hi ${escapeHtml(msg.name || 'there')}, we could not verify your payment for <strong>${rejectedTitle}</strong>.</p><p>Reason: ${safeRejectReason}</p><p>Please review your proof and contact support if you need help. <a href="${escapeHtml(portalUrl)}">Open the client portal</a> or email <a href="mailto:${escapeHtml(getSupportEmail())}">${escapeHtml(getSupportEmail())}</a>.</p></div>`,
+          text: `We could not verify your payment for ${String(msg.message ?? '').split('|')[0] || 'your project'}. Reason: ${rejectReason}. Portal: ${portalUrl}. Support: ${getSupportEmail()}`,
+        });
+        emailSent = Boolean(result?.success && !result?.manualRequired);
+        if (!emailSent) {
+          console.error('[payment] Rejection email dispatch failed:', result?.reason || 'Email provider returned an unsuccessful result.');
+        }
+      } catch (mailError) {
+        console.error('[payment] Rejection email failed:', mailError?.message ?? mailError);
+      }
+    } else if (!recipientEmail) {
+      console.error(`[payment] Cannot send rejection notice for message ${msg._id}: no recipient email is available.`);
+    }
+
+    if (emailSent) {
+      if (!msg.rejectionEmailSentAt) {
+        msg.rejectionEmailSentAt = new Date();
+        await msg.save();
+      }
+      await Message.findByIdAndDelete(req.params.msgId);
+    }
+    return res.json({
+      success: true,
+      emailSent,
+      message: emailSent
+        ? 'Payment rejected and client notified.'
+        : 'Payment was not rejected because the client could not be notified. The request remains available for retry.',
+    });
+  } catch (err) {
+    console.error('[payment] Rejection failed:', err?.message ?? err);
+    res.status(500).json({ success: false, message: 'Server error during rejection.' });
   }
 });
 

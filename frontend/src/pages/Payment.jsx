@@ -6,8 +6,11 @@ import { PageShell, buttonClass } from '../components/Editorial';
 import { apiRequest, apiUrl } from '../lib/api';
 import { SUPPORT_EMAIL } from '../lib/contact';
 import { PayPalScriptProvider, PayPalButtons } from '@paypal/react-paypal-js';
+import { QRCodeSVG } from 'qrcode.react';
 
 const INR_PER_USD = Number(import.meta.env.VITE_INR_PER_USD) || 88;
+const UPI_ID = String(import.meta.env.VITE_UPI_ID || '').trim();
+const UPI_NAME = String(import.meta.env.VITE_UPI_NAME || '').trim();
 
 const formatInr = (value) =>
   `\u20b9${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -80,6 +83,14 @@ const Payment = () => {
   const remainingAmount = isRemainingPayment
     ? 0
     : Math.max(totalAmount - amountToPay, 0);
+  const upiPaymentUrl = UPI_ID && UPI_NAME && amountToPay > 0
+    ? `upi://pay?${new URLSearchParams({
+      pa: UPI_ID,
+      pn: UPI_NAME,
+      am: Number(amountToPay).toFixed(2),
+      cu: 'INR',
+    }).toString()}`
+    : '';
 
   const serviceUsdPrice =
     Number(String(selectedSrvForMath?.priceUsd ?? '').replace(/[^0-9.]/g, '')) || 0;
@@ -618,24 +629,36 @@ const Payment = () => {
                 <div className="mt-8 border border-[var(--rule)] p-6">
                   <p className="eyebrow text-[var(--ink-soft)]">UPI / QR</p>
                   <div className="mt-4 flex flex-wrap items-center gap-6">
-                    <img
-                      src="/qr_code.png"
-                      alt="Payment QR code"
-                      className="h-40 w-40 border border-[var(--rule)] object-cover"
-                    />
+                    {upiPaymentUrl ? (
+                      <div className="border border-[var(--rule)] bg-white p-3">
+                        <QRCodeSVG
+                          value={upiPaymentUrl}
+                          size={160}
+                          level="M"
+                          includeMargin
+                          aria-label={`UPI payment QR for ${formatInr(amountToPay)}`}
+                        />
+                      </div>
+                    ) : (
+                      <div className="flex h-40 w-40 items-center justify-center border border-[var(--rule)] p-4 text-center text-xs leading-5 text-[var(--ink-soft)]">
+                        UPI QR is unavailable. Please use another payment method.
+                      </div>
+                    )}
                     <div>
                       <p className="font-mono-ui text-sm tracking-[0.04em] text-[var(--ink)]">
-                        paytmqr6ex9gc@ptys
+                        {UPI_ID || 'UPI ID not configured'}
                       </p>
                       <p className="mt-1 font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
-                        Shivam Kumar
+                        {UPI_NAME || 'UPI payee not configured'}
                       </p>
-                      <a
-                        href={`upi://pay?pa=paytmqr6ex9gc@ptys&pn=SHIVAM%20KUMAR&cu=INR&am=${amountToPay}`}
-                        className="mt-4 inline-flex items-center gap-2 border-b border-[var(--ink)] pb-1 text-sm font-medium text-[var(--ink)] transition-colors hover:border-[var(--signal)] hover:text-[var(--signal)]"
-                      >
-                        Pay via UPI app
-                      </a>
+                      {upiPaymentUrl && (
+                        <a
+                          href={upiPaymentUrl}
+                          className="mt-4 inline-flex items-center gap-2 border-b border-[var(--ink)] pb-1 text-sm font-medium text-[var(--ink)] transition-colors hover:border-[var(--signal)] hover:text-[var(--signal)]"
+                        >
+                          Pay via UPI app
+                        </a>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -774,7 +797,7 @@ const Payment = () => {
                         type="number"
                         name="amount"
                         min={amountToPay}
-                        step="0.01"
+                        step="1.00"
                         value={amountToPay}
                         readOnly
                         required

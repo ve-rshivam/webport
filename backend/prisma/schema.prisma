@@ -63,6 +63,7 @@ model ClientProject {
   status       String  @default("Pending Verification")
   progress     Int     @default(10)
   deliveryDate String?
+  previewUrl   String?
   notes        String?
 
   projectType     String?

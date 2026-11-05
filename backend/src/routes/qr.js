@@ -62,7 +62,7 @@ function submissionView(alert) {
   };
 }
 
-async function approveSubmission(id, admin, req, totalAmount, disconnectClientSockets = () => {}) {
+async function approveSubmission(id, admin, req, totalAmount, disconnectClientSockets = () => {}, syncClientProjectCredentials = async () => {}) {
   const alert = await prisma.adminAlert.findUnique({ where: { id } });
   if (!alert || alert.type !== 'qr_submission') {
     throw new ValidationError('Submission not found.', 404);
@@ -93,7 +93,7 @@ async function approveSubmission(id, admin, req, totalAmount, disconnectClientSo
     name: details.clientName ?? details.name ?? alert.userName,
     serviceName: details.serviceName ?? null,
     details: { gateway: 'qr', submissionId: alert.id, approvedBy: admin?.id ?? null },
-  }, disconnectClientSockets);
+  }, { disconnectClientSockets, syncClientProjectCredentials });
   if (result.project) {
     emitProjectMutation(req, result.duplicate ? 'updated' : 'created', result.project, {
       source: 'portal',
@@ -226,7 +226,7 @@ async function rejectSubmission(id, reason, admin, req = null) {
   return { submissionId: alert.id };
 }
 
-export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadLimiter, resolveAdvanceFloor, disconnectClientSockets = () => {} } = {}) {
+export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadLimiter, resolveAdvanceFloor, disconnectClientSockets = () => {}, syncClientProjectCredentials = async () => {} } = {}) {
   const router = express.Router();
   const limit = limiter ?? ((_req, _res, next) => next());
   const uploadLimit = qrUploadLimiter ?? ((_req, _res, next) => next());
@@ -234,10 +234,10 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
   const requireProjectAndPaymentPermissions = (req, res, next) => {
     if (req.admin.role === 'superadmin') return next();
     const permissions = new Set(req.admin.permissions ?? []);
-    if (permissions.has('projects') && permissions.has('payments')) return next();
+    if (permissions.has('projects') && permissions.has('payments') && permissions.has('client_access')) return next();
     return res.status(403).json({
       success: false,
-      message: 'Access Denied. Approving a payment proof requires both projects and payments permissions.',
+      message: 'Access Denied. Approving a payment proof requires projects, payments, and client_access permissions.',
     });
   };
   const approveGuard = [verifyAdminToken, requireProjectAndPaymentPermissions];
@@ -422,7 +422,7 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
     try {
       const body = requireJsonBody(req);
       const qrPaymentId = validateRequiredString(body.qrPaymentId, 'qrPaymentId', 1, 64);
-      const result = await approveSubmission(qrPaymentId, req.admin, req, body.totalAmount, disconnectClientSockets);
+      const result = await approveSubmission(qrPaymentId, req.admin, req, body.totalAmount, disconnectClientSockets, syncClientProjectCredentials);
       return res.json({ success: true, ...result });
     } catch (err) {
       return sendError(res, err, 'Could not approve the submission.');
@@ -443,7 +443,7 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
     router.post('/:id/approve', ...approveGuard, async (req, res) => {
     try {
       const body = requireJsonBody(req);
-      const result = await approveSubmission(req.params.id, req.admin, req, body.totalAmount, disconnectClientSockets);
+      const result = await approveSubmission(req.params.id, req.admin, req, body.totalAmount, disconnectClientSockets, syncClientProjectCredentials);
       return res.json({ success: true, ...result });
     } catch (err) {
       return sendError(res, err, 'Could not approve the submission.');

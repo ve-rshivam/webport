@@ -5,6 +5,7 @@ import PageWrapper from '../components/PageWrapper';
 import { apiUrl, portalApi, portalSession } from '../lib/api';
 import { SUPPORT_EMAIL, emailHref } from '../lib/contact';
 import './ClientPortal.css';
+import LivePreviewTab from '../components/LivePreviewTab';
 
 const formatInr = (value) =>
   `\u20b9${Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
@@ -65,6 +66,7 @@ function ClientPortal() {
   const [thread, setThread] = useState({ projectId: null, items: [], loading: false, error: '' });
   const [invoiceDownloading, setInvoiceDownloading] = useState(false);
   const [invoiceError, setInvoiceError] = useState('');
+  const [activeTab, setActiveTab] = useState('overview');
 
   const projectData = projectsList.find((p) => p.id === activeProjectId) || projectsList[0];
   const threadMatches = Boolean(projectData?.id) && thread.projectId === projectData.id;
@@ -709,6 +711,75 @@ function ClientPortal() {
               exit={{ opacity: 0 }}
               transition={{ duration: 0.2 }}
             >
+              {/* Project selector and the two portal views */}
+              <div className="mb-8 flex flex-wrap items-center justify-between gap-4 border-b border-[var(--rule)] pb-4">
+                <div role="tablist" aria-label="Project sections" className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    role="tab"
+                    id="portal-overview-tab"
+                    onClick={() => setActiveTab('overview')}
+                    aria-selected={activeTab === 'overview'}
+                    aria-controls="portal-overview-panel"
+                    className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                      activeTab === 'overview'
+                        ? 'bg-[var(--ink)] text-[var(--paper)]'
+                        : 'border border-[var(--rule)] bg-[var(--paper)] text-[var(--ink-soft)] hover:text-[var(--ink)]'
+                    }`}
+                  >
+                    Project overview
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    id="portal-preview-tab"
+                    onClick={() => setActiveTab('preview')}
+                    aria-selected={activeTab === 'preview'}
+                    aria-controls="portal-preview-panel"
+                    className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                      activeTab === 'preview'
+                        ? 'bg-[var(--ink)] text-[var(--paper)]'
+                        : 'border border-[var(--rule)] bg-[var(--paper)] text-[var(--ink-soft)] hover:text-[var(--ink)]'
+                    }`}
+                  >
+                    Live preview
+                  </button>
+                </div>
+
+                {projectsList.length > 1 && (
+                  <select
+                    value={projectData.id}
+                    onChange={(e) => setActiveProjectId(e.target.value)}
+                    className="rounded-lg border border-[var(--rule)] bg-[var(--paper)] px-3 py-2 text-sm text-[var(--ink)]"
+                  >
+                    {projectsList.map((proj) => (
+                      <option key={proj.id} value={proj.id}>
+                        {proj.projectTitle || 'Untitled Project'}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {activeTab === 'preview' && (
+                <div
+                  role="tabpanel"
+                  id="portal-preview-panel"
+                  aria-labelledby="portal-preview-tab"
+                  className="mb-10"
+                >
+                  <LivePreviewTab
+                    previewUrl={projectData.previewUrl}
+                    projectTitle={projectData.projectTitle}
+                  />
+                </div>
+              )}
+              {activeTab === 'overview' && (
+                <div
+                  role="tabpanel"
+                  id="portal-overview-panel"
+                  aria-labelledby="portal-overview-tab"
+                >
               <div className="mb-10 grid grid-cols-1 gap-6 md:grid-cols-12 md:gap-x-8">
                 <div className="col-span-12 md:col-span-7">
                   <p className="eyebrow text-[var(--ink-soft)]">Project overview</p>
@@ -977,6 +1048,8 @@ function ClientPortal() {
                   </button>
                 </form>
               </section>
+                </div>
+              )}
             </motion.div>
           </AnimatePresence>
         )}

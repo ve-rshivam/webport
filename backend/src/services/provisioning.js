@@ -28,17 +28,28 @@ async function findPayment(gateway, transactionId) {
   return prisma.payment.findUnique({ where: { gateway_transactionId: { gateway, transactionId } } });
 }
 
-export async function issueTemporaryCredentials(user, { projectTitle, loginUrl, disconnectClientSockets = () => {} } = {}) {
+export async function issueTemporaryCredentials(user, {
+  projectTitle,
+  loginUrl,
+  disconnectClientSockets = () => {},
+  syncClientProjectCredentials = async () => {},
+  sendEmail = true,
+} = {}) {
   const temporaryPassword = generateTemporaryPassword();
   const tempPasswordHash = await hashSecret(temporaryPassword);
 
   const updated = await prisma.user.update({
     where: { id: user.id },
     data: {
+      passwordHash: null,
+      passwordUpdatedAt: new Date(),
       tempPasswordHash,
       tempPasswordExpiry: addMinutes(TEMP_PASSWORD_TTL_MINUTES),
       tempPasswordAttempts: 0,
       mustChangePassword: true,
+      resetOtpHash: null,
+      resetOtpExpiry: null,
+      resetOtpAttempts: 0,
       sessionToken: null,
       sessionTokenExpiry: null,
       sessionFingerprint: null,
@@ -47,11 +58,25 @@ export async function issueTemporaryCredentials(user, { projectTitle, loginUrl, 
       lastActiveAt: null,
     },
   });
+  await syncClientProjectCredentials({
+    email: updated.email,
+    passwordHash: tempPasswordHash,
+    isTemporaryKey: true,
+  });
   disconnectClientSockets(updated.id);
 
   let emailSent = false;
   let manualRequired = false;
   try {
+    if (!sendEmail) {
+      return {
+        user: updated,
+        temporaryPassword,
+        manualPasscode: temporaryPassword,
+        emailSent: false,
+        manualRequired: false,
+      };
+    }
     const dispatchResult = await sendCredentialsEmail({
       to: updated.email,
       recipientName: updated.name ?? 'there',
@@ -83,7 +108,10 @@ export async function issueTemporaryCredentials(user, { projectTitle, loginUrl, 
   };
 }
 
-export async function provisionFromPayment(input, disconnectClientSockets = () => {}) {
+export async function provisionFromPayment(input, {
+  disconnectClientSockets = () => {},
+  syncClientProjectCredentials = async () => {},
+} = {}) {
   const gateway = input.gateway;
   const transactionId = String(input.transactionId ?? '').trim();
   if (!transactionId) throw new ValidationError('Payment is missing a transaction id.');
@@ -195,7 +223,11 @@ export async function provisionFromPayment(input, disconnectClientSockets = () =
   let credentials = { emailSent: false, temporaryPassword: null, manualRequired: false, manualPasscode: null };
 
   if (!input.isRemainingPayment) {
-    credentials = await issueTemporaryCredentials(user, { projectTitle: project.projectTitle, disconnectClientSockets });
+    credentials = await issueTemporaryCredentials(user, {
+      projectTitle: project.projectTitle,
+      disconnectClientSockets,
+      syncClientProjectCredentials,
+    });
     try {
       session = await issueSession(prisma, user);
     } catch (err) {

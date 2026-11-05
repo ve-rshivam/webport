@@ -15,7 +15,7 @@ import { emitPaymentReceived, emitProjectMutation } from '../lib/realtime.js';
 import { claimWebhookEvent } from '../lib/webhookGuard.js';
 import { recordAudit, AUDIT_ACTIONS } from '../lib/audit.js';
 
-export function createWebhookRouter({ resolvePaypalPayment, disconnectClientSockets = () => {} } = {}) {
+export function createWebhookRouter({ resolvePaypalPayment, disconnectClientSockets = () => {}, syncClientProjectCredentials = async () => {} } = {}) {
   const router = express.Router();
   const raw = express.raw({ type: '*/*', limit: '1mb' });
 
@@ -68,7 +68,7 @@ export function createWebhookRouter({ resolvePaypalPayment, disconnectClientSock
         return res.status(200).json({ success: true, recorded: 'failed' });
       }
 
-      const result = await provisionFromPayment(normalized, disconnectClientSockets);
+      const result = await provisionFromPayment(normalized, { disconnectClientSockets, syncClientProjectCredentials });
       if (!result.duplicate && result.project) {
         emitProjectMutation(req, normalized.isRemainingPayment ? 'updated' : 'created', result.project, {
           source: 'portal',
@@ -87,7 +87,7 @@ export function createWebhookRouter({ resolvePaypalPayment, disconnectClientSock
           },
         });
       }
-      if (provisionInput.isRemainingPayment && result.project && !result.duplicate) {
+      if (normalized.isRemainingPayment && result.project && !result.duplicate) {
         await sendTopUpReceipt({
           to: normalized.email,
           name: normalized.name,
@@ -169,7 +169,7 @@ export function createWebhookRouter({ resolvePaypalPayment, disconnectClientSock
       }
       const paymentValuation = await resolvePaypalPayment(normalized);
       const provisionInput = { ...normalized, ...paymentValuation };
-      const result = await provisionFromPayment(provisionInput, disconnectClientSockets);
+      const result = await provisionFromPayment(provisionInput, { disconnectClientSockets, syncClientProjectCredentials });
       if (!result.duplicate && result.project) {
         emitProjectMutation(req, provisionInput.isRemainingPayment ? 'updated' : 'created', result.project, {
           source: 'portal',

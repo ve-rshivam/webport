@@ -11,10 +11,8 @@ import {
 } from '../services/validators.js';
 import {
   generateOtp,
-  generateTemporaryPassword,
   hashSecret,
   OTP_TTL_MINUTES,
-  TEMP_PASSWORD_TTL_MINUTES,
 } from '../services/auth.service.js';
 import { issueTemporaryCredentials, provisionFromPayment } from '../services/provisioning.js';
 import { createAlert } from '../services/notifications.js';
@@ -49,7 +47,7 @@ function requirePermission(req, permission) {
   throw new ValidationError(`This operation requires the ${permission} permission.`, 403);
 }
 
-export function createInvoiceAdminRouter({ verifyAdminToken, checkPerm, disconnectClientSockets = () => {} }) {
+export function createInvoiceAdminRouter({ verifyAdminToken, checkPerm, disconnectClientSockets = () => {}, syncClientProjectCredentials = async () => {} }) {
   const router = express.Router();
   const requireProjectAndPaymentPermissions = (req, res, next) => {
     if (req.admin.role === 'superadmin') return next();
@@ -87,6 +85,7 @@ export function createInvoiceAdminRouter({ verifyAdminToken, checkPerm, disconne
       let transactionRef = typeof body.transactionRef === 'string' ? body.transactionRef.trim().slice(0, 160) : '';
 
       if (qrAlert) {
+        requirePermission(req, 'client_access');
         if (qrDetails.status === 'approved') throw new ValidationError('This payment proof was already approved.', 409);
         if (qrDetails.status === 'rejected') throw new ValidationError('This payment proof was rejected.', 409);
 
@@ -106,7 +105,7 @@ export function createInvoiceAdminRouter({ verifyAdminToken, checkPerm, disconne
           name: qrDetails.clientName ?? qrDetails.name ?? qrAlert.userName,
           serviceName: qrDetails.serviceName ?? projectType,
           details: { gateway: 'qr', submissionId: qrAlert.id },
-        }, disconnectClientSockets);
+        }, { disconnectClientSockets, syncClientProjectCredentials });
         project = provisioningResult.project;
         if (!project && provisioningResult.payment?.projectId) {
           project = await prisma.clientProject.findUnique({ where: { id: provisioningResult.payment.projectId } });
@@ -273,7 +272,7 @@ function optionalText(value, field, maxLength) {
   return validateRequiredString(value, field, 1, maxLength);
 }
 
-export function createManualClientProjectRouter({ verifyAdminToken, checkPerm, getLegacyProjectModel }) {
+export function createManualClientProjectRouter({ verifyAdminToken, checkPerm, getLegacyProjectModel, disconnectClientSockets = () => {}, syncClientProjectCredentials = async () => {} }) {
   const router = express.Router();
   router.use(verifyAdminToken);
 
@@ -296,6 +295,7 @@ export function createManualClientProjectRouter({ verifyAdminToken, checkPerm, g
       }
       const features = normalizeFeatures(body.features, []);
       const projectType = optionalText(body.projectType, 'projectType', 120) ?? null;
+      const previewUrl = optionalText(body.previewUrl, 'previewUrl', 2048) ?? null;
       const estimatedDays = body.estimatedDays === undefined || body.estimatedDays === null || body.estimatedDays === ''
         ? null
         : Number(body.estimatedDays);
@@ -303,8 +303,8 @@ export function createManualClientProjectRouter({ verifyAdminToken, checkPerm, g
         throw new ValidationError('estimatedDays must be a whole number between 1 and 730.');
       }
       const currency = validateRequiredString(body.currency ?? 'INR', 'currency', 3, 8).toUpperCase();
-      const temporaryPassword = generateTemporaryPassword(10);
       let createdAccount = false;
+      const canManageClientAccess = req.admin.role === 'superadmin' || req.admin.permissions?.includes('client_access');
 
       // [INVOICE] Manual project creation par hi INV-YYYY-XXXX reserve karte hain,
       
@@ -322,18 +322,20 @@ export function createManualClientProjectRouter({ verifyAdminToken, checkPerm, g
           throw new ValidationError('That email already belongs to a non-client account.', 409);
         }
         if (!user) {
+          if (!canManageClientAccess) {
+            throw new ValidationError('Creating a new client account requires the client_access permission.', 403);
+          }
           user = await tx.user.create({
             data: {
               email: clientEmail,
               name: clientName,
               role: 'client',
               mustChangePassword: true,
-              tempPasswordHash: await hashSecret(temporaryPassword),
-              tempPasswordExpiry: new Date(Date.now() + TEMP_PASSWORD_TTL_MINUTES * 60 * 1000),
-              tempPasswordAttempts: 0,
             },
           });
           createdAccount = true;
+        } else if (!user.passwordHash && !user.tempPasswordHash && !canManageClientAccess) {
+          throw new ValidationError('Issuing access to this client requires the client_access permission.', 403);
         } else if (user.name !== clientName) {
           user = await tx.user.update({ where: { id: user.id }, data: { name: clientName } });
         }
@@ -347,6 +349,7 @@ export function createManualClientProjectRouter({ verifyAdminToken, checkPerm, g
             projectTitle,
             serviceName: optionalText(body.serviceName, 'serviceName', 200) ?? projectTitle,
             projectType,
+            previewUrl,
             estimatedDays,
             features,
             currency,
@@ -381,14 +384,23 @@ export function createManualClientProjectRouter({ verifyAdminToken, checkPerm, g
       });
 
       const loginUrl = 'https://rshivam.dev/portal';
+      const credentials = createdAccount || (!result.user.passwordHash && !result.user.tempPasswordHash)
+        ? await issueTemporaryCredentials(result.user, {
+            projectTitle,
+            disconnectClientSockets,
+            syncClientProjectCredentials,
+            sendEmail: false,
+          })
+        : null;
+      const temporaryPassword = credentials?.temporaryPassword ?? null;
       const deliverables = features.length
         ? features.map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')
         : '<li>Project scope will be confirmed with your developer.</li>';
-      const passwordBlock = createdAccount
-        ? `<p><strong>Temporary password:</strong> ${escapeHtml(temporaryPassword)}</p><p>Please change this password after your first sign-in.</p>`
+      const passwordBlock = credentials
+        ? `<p><strong>Temporary password:</strong> ${escapeHtml(temporaryPassword)}</p><p>Change this password after your first sign-in. It expires in 72 hours.</p>`
         : '<p>Use your existing portal password. If you need access help, use the password reset option on the portal.</p>';
-      const textPassword = createdAccount
-        ? `Temporary password: ${temporaryPassword}\nPlease change this password after your first sign-in.`
+      const textPassword = credentials
+        ? `Temporary password: ${temporaryPassword}\nChange this password after your first sign-in. It expires in 72 hours.`
         : 'Use your existing portal password. If you need access help, use the password reset option on the portal.';
       // [INVOICE PDF] Memory buffer
       let invoicePdf = null;
@@ -421,7 +433,7 @@ export function createManualClientProjectRouter({ verifyAdminToken, checkPerm, g
           subject: `Your project portal is ready: ${projectTitle}`,
           html: `<p>Hello ${escapeHtml(clientName)},</p><p>Your project <strong>${escapeHtml(projectTitle)}</strong> is now available in the client portal.</p><p><strong>Portal:</strong> <a href="${escapeHtml(loginUrl)}">${escapeHtml(loginUrl)}</a><br><strong>Registered email:</strong> ${escapeHtml(clientEmail)}</p>${passwordBlock}<p><strong>Total valuation:</strong> ${escapeHtml(currency)} ${totalCost.toLocaleString('en-IN')}<br><strong>Advance paid:</strong> ${escapeHtml(currency)} ${amountPaid.toLocaleString('en-IN')}</p><p><strong>Deliverables:</strong></p><ul>${deliverables}</ul>`,
           text: `Hello ${clientName},\n\nYour project ${projectTitle} is now available in the client portal.\nPortal: ${loginUrl}\nRegistered email: ${clientEmail}\n${textPassword}\n\nTotal valuation: ${currency} ${totalCost.toLocaleString('en-IN')}\nAdvance paid: ${currency} ${amountPaid.toLocaleString('en-IN')}\nDeliverables: ${features.join(', ') || 'Project scope will be confirmed with your developer.'}`,
-          plainPasscode: createdAccount ? temporaryPassword : null,
+          plainPasscode: credentials ? temporaryPassword : null,
           attachments: invoicePdf
             ? [{ filename: `Invoice-${invoiceNumber}.pdf`, content: invoicePdf, contentType: 'application/pdf' }]
             : [],
@@ -454,8 +466,8 @@ export function createManualClientProjectRouter({ verifyAdminToken, checkPerm, g
         invoiceIssuedAt,
         invoiceAttached: Boolean(invoicePdf),
         manualRequired,
-        ...(manualRequired && createdAccount ? { manualPasscode: temporaryPassword } : {}),
-        mustChangePassword: createdAccount,
+        ...(manualRequired && credentials ? { manualPasscode: temporaryPassword } : {}),
+        mustChangePassword: Boolean(credentials),
       });
     } catch (err) {
       return sendError(res, err, 'Could not create the client project.');
@@ -486,6 +498,9 @@ export function createManualClientProjectRouter({ verifyAdminToken, checkPerm, g
       if (estimatedDays !== undefined && estimatedDays !== null && (!Number.isInteger(estimatedDays) || estimatedDays < 1 || estimatedDays > 730)) {
         throw new ValidationError('estimatedDays must be a whole number between 1 and 730.');
       }
+      const previewUrl = body.previewUrl === undefined
+        ? undefined
+        : optionalText(body.previewUrl, 'previewUrl', 2048);
 
       const LegacyProject = getLegacyProjectModel?.();
       let legacy = null;
@@ -520,6 +535,7 @@ export function createManualClientProjectRouter({ verifyAdminToken, checkPerm, g
         if (body.notes !== undefined) legacy.notes = optionalText(body.notes, 'notes', 5000) ?? '';
         if (features !== undefined) legacy.features = features;
         if (body.projectType !== undefined) legacy.projectType = optionalText(body.projectType, 'projectType', 120) ?? '';
+        if (previewUrl !== undefined) legacy.previewUrl = previewUrl ?? '';
         if (estimatedDays !== undefined) legacy.estimatedDays = estimatedDays;
         legacy.lastUpdated = new Date();
         await legacy.save();
@@ -551,6 +567,7 @@ export function createManualClientProjectRouter({ verifyAdminToken, checkPerm, g
           ...(body.clientName !== undefined ? { clientName: validateRequiredString(body.clientName, 'clientName', 1, 120) } : {}),
           ...(body.projectTitle !== undefined ? { projectTitle: validateRequiredString(body.projectTitle, 'projectTitle', 1, 200) } : {}),
           ...(body.projectType !== undefined ? { projectType: optionalText(body.projectType, 'projectType', 120) } : {}),
+          ...(previewUrl !== undefined ? { previewUrl } : {}),
           ...(body.serviceName !== undefined ? { serviceName: optionalText(body.serviceName, 'serviceName', 200) } : {}),
           ...(body.status !== undefined ? { status: validateRequiredString(body.status, 'status', 1, 120) } : {}),
           ...(body.deliveryDate !== undefined ? { deliveryDate: optionalText(body.deliveryDate, 'deliveryDate', 40) } : {}),
@@ -609,6 +626,10 @@ async function sendRoleReset(userId, expectedScope, admin, req = null) {
   }
   if (actualScope === 'superadmin' && admin?.role !== 'superadmin') {
     throw new ValidationError('Only a superadmin can reset a superadmin account.', 403);
+  }
+  const requiredPermission = actualScope === 'client' ? 'client_access' : 'team';
+  if (admin?.role !== 'superadmin' && !admin?.permissions?.includes(requiredPermission)) {
+    throw new ValidationError(`This operation requires the ${requiredPermission} permission.`, 403);
   }
 
   const { purpose, alertType } = resetMetaForRole(user.role);
@@ -725,7 +746,7 @@ async function sendDeveloperMessage({ projectId, text, subject, admin, req }) {
   return { message, emailSent, project };
 }
 
-export function createAdminPortalRouter({ verifyAdminToken, checkPerm, otpEmailLimiter, messageLimiter, disconnectClientSockets = () => {} }) {
+export function createAdminPortalRouter({ verifyAdminToken, checkPerm, otpEmailLimiter, messageLimiter, disconnectClientSockets = () => {}, syncClientProjectCredentials = async () => {} }) {
   const otpLimit = otpEmailLimiter ?? ((_req, _res, next) => next());
   const messageLimit = messageLimiter ?? ((_req, _res, next) => next());
   const router = express.Router();
@@ -881,14 +902,15 @@ export function createAdminPortalRouter({ verifyAdminToken, checkPerm, otpEmailL
   });
 
     // [RATE LIMITER - OTP & EMAIL QUOTA]: Credential reissue emails se email quota bachane ke liye.
-  router.post('/reissue-credentials', otpLimit, checkPerm(['team', 'projects']), async (req, res) => {
+  router.post('/reissue-credentials', otpLimit, checkPerm(['client_access']), async (req, res) => {
     try {
       const body = requireJsonBody(req);
       const userId = validateRequiredString(body.userId, 'userId', 1, 64);
       const user = await prisma.user.findUnique({ where: { id: userId } });
       if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+      if (user.role !== 'client') throw new ValidationError('Portal credentials can only be reissued for client accounts.', 403);
 
-      const result = await issueTemporaryCredentials(user, { disconnectClientSockets });
+      const result = await issueTemporaryCredentials(user, { disconnectClientSockets, syncClientProjectCredentials });
       await createAlert({
         type: 'user_created',
         severity: result.manualRequired ? 'warning' : 'info',
@@ -912,12 +934,13 @@ export function createAdminPortalRouter({ verifyAdminToken, checkPerm, otpEmailL
   });
 
     // [RATE LIMITER - OTP & EMAIL QUOTA]: Per-user credential emails se quota bachane ke liye.
-  router.post('/users/:id/credentials', otpLimit, checkPerm(['team', 'projects']), async (req, res) => {
+  router.post('/users/:id/credentials', otpLimit, checkPerm(['client_access']), async (req, res) => {
     try {
       const user = await prisma.user.findUnique({ where: { id: req.params.id } });
       if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+      if (user.role !== 'client') throw new ValidationError('Portal credentials can only be reissued for client accounts.', 403);
 
-      const result = await issueTemporaryCredentials(user, { disconnectClientSockets });
+      const result = await issueTemporaryCredentials(user, { disconnectClientSockets, syncClientProjectCredentials });
       await createAlert({
         type: 'user_created',
         severity: result.manualRequired ? 'warning' : 'info',
@@ -967,7 +990,7 @@ export function createAdminPortalRouter({ verifyAdminToken, checkPerm, otpEmailL
   });
 
   // [RATE LIMITER - OTP & EMAIL QUOTA]: Client account OTP reset spam rokne ke liye.
-  router.post('/reset-password/client', otpLimit, checkPerm(['team', 'projects']), async (req, res) => {
+  router.post('/reset-password/client', otpLimit, checkPerm(['client_access']), async (req, res) => {
     try {
       const body = requireJsonBody(req);
       const userId = validateRequiredString(body.userId, 'userId', 1, 64);
@@ -979,7 +1002,7 @@ export function createAdminPortalRouter({ verifyAdminToken, checkPerm, otpEmailL
   });
 
     // [RATE LIMITER - OTP & EMAIL QUOTA]: Per-user password reset email spam rokne ke liye.
-  router.post('/users/:id/reset-password', otpLimit, checkPerm(['team', 'projects']), async (req, res) => {
+  router.post('/users/:id/reset-password', otpLimit, async (req, res) => {
     try {
       const user = await prisma.user.findUnique({ where: { id: req.params.id } });
       if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
@@ -1099,6 +1122,7 @@ export function createAdminPortalRouter({ verifyAdminToken, checkPerm, otpEmailL
     try {
       const body = requireJsonBody(req);
       requirePermission(req, 'projects');
+      if (body.sendCredentials !== false) requirePermission(req, 'client_access');
       if (['totalCost', 'amountPaid', 'currency'].some((field) => body[field] !== undefined)) {
         requirePermission(req, 'payments');
       }
@@ -1143,7 +1167,7 @@ export function createAdminPortalRouter({ verifyAdminToken, checkPerm, otpEmailL
 
       let credentials = { emailSent: false };
       if (body.sendCredentials !== false) {
-        credentials = await issueTemporaryCredentials(user, { projectTitle, disconnectClientSockets });
+        credentials = await issueTemporaryCredentials(user, { projectTitle, disconnectClientSockets, syncClientProjectCredentials });
       }
 
       await createAlert({

@@ -39,7 +39,8 @@ const ADMIN_SUBDOMAIN = (import.meta.env.VITE_ADMIN_SUBDOMAIN || '')
 
 const isStealthAdminHost = () => {
   if (!ADMIN_SUBDOMAIN || typeof window === 'undefined') return false;
-  return window.location.hostname.toLowerCase() === `${ADMIN_SUBDOMAIN}.rshivam.dev`;
+  const hostname = window.location.hostname.toLowerCase().replace(/\.$/, '');
+  return hostname.startsWith(`${ADMIN_SUBDOMAIN}.`) && hostname.endsWith('.rshivam.dev');
 };
 
 const isMainDomainHost = () =>
@@ -47,7 +48,7 @@ const isMainDomainHost = () =>
   ['rshivam.dev', 'www.rshivam.dev'].includes(window.location.hostname.toLowerCase());
 
 const AdminRoute = () => {
-  if (isMainDomainHost()) return <Navigate to="/" replace />;
+  if (import.meta.env.PROD && isMainDomainHost()) return <Navigate to="/" replace />;
   return <PageWrapper><Admin /></PageWrapper>;
 };
 
@@ -121,8 +122,9 @@ function App() {
             }
           >
             <Routes>
-              <Route path="/" element={<PageWrapper><Admin /></PageWrapper>} />
-              <Route path="*" element={<Navigate to="/" replace />} />
+              <Route path="/" element={<Admin />} />
+              <Route path="/admin/*" element={<Admin />} />
+              <Route path="*" element={<Admin />} />
             </Routes>
           </Suspense>
         ) : (
