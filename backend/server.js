@@ -120,8 +120,10 @@ const PROJECT_VERCEL_ORIGIN = new RegExp(
 );
 const isProjectVercelOrigin = (origin) => {
   if (!origin) return false;
+  // Vercel aur Render dono ke frontend URLs (preview & prod) allow karne ke liye:
   try {
-    return PROJECT_VERCEL_ORIGIN.test(new URL(origin).origin);
+    const originUrl = new URL(origin).origin;
+    return originUrl.endsWith('.vercel.app') || originUrl.endsWith('.onrender.com');
   } catch {
     return false;
   }
@@ -129,13 +131,13 @@ const isProjectVercelOrigin = (origin) => {
 
 const corsOptions = {
   origin: function (origin, callback) {
-        if (!origin) return callback(null, true);
-
-        if (ALLOWED_ORIGINS.some((allowed) => origin === allowed) || isProjectVercelOrigin(origin)) {
+    if (!origin) return callback(null, true);
+    if (ALLOWED_ORIGINS.includes(origin) || isProjectVercelOrigin(origin)) {
       return callback(null, true);
     }
-
-        callback(new Error('Not allowed by CORS'), false);
+    // Debugging ke liye (aapko production me ise hatana chahiye baad me)
+    console.log(`[CORS Blocked] Origin: ${origin}`);
+    callback(new Error('Not allowed by CORS'), false);
   },
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
   allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],

@@ -745,7 +745,15 @@ async function sendDeveloperMessage({ projectId, text, subject, admin, req }) {
   return { message, emailSent, project };
 }
 
-export function createAdminPortalRouter({ verifyAdminToken, checkPerm, otpEmailLimiter, messageLimiter }) {
+
+export function createAdminPortalRouter({ 
+  verifyAdminToken, 
+  checkPerm, 
+  otpEmailLimiter, 
+  messageLimiter,
+  disconnectClientSockets = () => {},         
+  syncClientProjectCredentials = async () => {} 
+}) {
   const otpLimit = otpEmailLimiter ?? ((_req, _res, next) => next());
   const messageLimit = messageLimiter ?? ((_req, _res, next) => next());
   const router = express.Router();
@@ -910,7 +918,10 @@ export function createAdminPortalRouter({ verifyAdminToken, checkPerm, otpEmailL
       const user = await prisma.user.findUnique({ where: { id: userId } });
       if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
 
-      const result = await issueTemporaryCredentials(user);
+      const result = await issueTemporaryCredentials(user, {
+        disconnectClientSockets,
+        syncClientProjectCredentials
+      });
       await createAlert({
         type: 'user_created',
         severity: result.manualRequired ? 'warning' : 'info',
