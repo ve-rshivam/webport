@@ -73,6 +73,43 @@ function ClientPortal() {
   const messages = threadMatches ? thread.items : [];
   const messagesLoading = Boolean(projectData?.id) && (!threadMatches || thread.loading);
   const messagesError = threadMatches ? thread.error : '';
+  useEffect(() => {
+    const checkMagicSetup = async () => {
+      if (typeof window === 'undefined' || isLoggedIn) return;
+      
+      const params = new URLSearchParams(window.location.search);
+      const isSetup = params.get('setup') === 'true';
+      const email = params.get('email');
+      const passcode = params.get('passcode');
+
+      if (isSetup && email && passcode) {
+        setLoading(true);
+        setError('');
+        
+        try {
+          // Passcode se direct backend me login karein
+          const data = await portalApi.login(email.trim(), passcode.trim());
+          portalSession.save(data.token, data.user?.email ?? email.trim());
+
+          setSession({ user: data.user ?? null });
+          setProjectsList(data.projects ?? []);
+          setActiveProjectId(data.projects?.[0]?.id ?? '');
+          setMustChangePassword(true); // User ko seedha naya password bananai ke form pe bhejein
+          setIsLoggedIn(true);
+          
+          // Clean the URL so a refresh doesn't trigger it again
+          window.history.replaceState({}, document.title, window.location.pathname);
+          
+        } catch (err) {
+          setError(err.message || 'Invalid or expired setup link. Please login manually.');
+        } finally {
+          setLoading(false);
+        }
+      }
+    };
+    
+    checkMagicSetup();
+  }, [isLoggedIn]);
 
     useEffect(() => {
     const restoreSession = async () => {
