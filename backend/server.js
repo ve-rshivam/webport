@@ -1198,8 +1198,8 @@ app.post('/api/payment/razorpay-order', paymentOrderLimiter, async (req, res) =>
     }
     
     if (isRemainingPayment && projectId) {
-        
-        const project = await ClientProject.findById(projectId);
+        const found = await findProjectByIdAcrossStores(projectId, 'prisma');
+        const project = found?.project;
         if (!project) return res.status(404).json({ success: false, message: "Project not found" });
         if (String(project.currency ?? 'INR').toUpperCase() !== 'INR') {
           return res.status(400).json({ success: false, message: 'This project balance must be paid in its original currency.' });

@@ -12,10 +12,10 @@ import {
 } from '../services/validators.js';
 import { provisionFromPayment } from '../services/provisioning.js';
 import { createAlert } from '../services/notifications.js';
-import { sendSupportAlertEmail, portalUrl } from '../services/email.service.js';
 import { emitPaymentReceived, emitProjectMutation } from '../lib/realtime.js';
 import { inspectImageDataUrl } from '../lib/security.js';
 import { recordAudit, AUDIT_ACTIONS } from '../lib/audit.js';
+import { sendSupportAlertEmail, sendEmail, getSupportEmail, portalUrl } from '../services/email.service.js';
 
 const MAX_SCREENSHOT_CHARS = 4_000_000;
 
@@ -47,6 +47,11 @@ function validateScreenshot(value) {
 
 function submissionView(alert) {
   const details = alert.details ?? {};
+  const isRemainingPayment = Boolean(
+    details.isRemainingPayment ||
+    details.projectId ||
+    /remaining balance/i.test(String(details.notes ?? ''))
+  );
   return {
     id: alert.id,
     clientName: details.clientName ?? details.name ?? alert.userName ?? null,
@@ -56,6 +61,8 @@ function submissionView(alert) {
     transactionRef: details.transactionRef ?? details.transactionId ?? null,
     screenshotUrl: details.screenshotUrl ?? null,
     serviceName: details.serviceName ?? null,
+    projectId: details.projectId ?? null,
+    isRemainingPayment,
     notes: details.notes ?? null,
     status: details.status ?? 'pending',
     createdAt: alert.createdAt,
@@ -82,17 +89,25 @@ async function approveSubmission(id, admin, req, totalAmount, disconnectClientSo
     throw new ValidationError('A project valuation at least as large as the verified payment is required.');
   }
 
+  const isRemainingPayment = Boolean(
+    details.isRemainingPayment ||
+    details.projectId ||
+    /remaining balance/i.test(String(details.notes ?? ''))
+  );
   const email = details.email ?? alert.userEmail;
   const result = await provisionFromPayment({
     gateway: 'qr',
     transactionId: String(details.transactionRef ?? details.transactionId ?? alert.id),
     amount,
+    projectAmount: amount,
     totalAmount: verifiedTotal,
     currency: details.currency ?? 'INR',
     email,
     name: details.clientName ?? details.name ?? alert.userName,
     serviceName: details.serviceName ?? null,
-    details: { gateway: 'qr', submissionId: alert.id, approvedBy: admin?.id ?? null },
+    projectId: details.projectId ?? null,
+    isRemainingPayment,
+    details: { gateway: 'qr', submissionId: alert.id, approvedBy: admin?.id ?? null, isRemainingPayment },
   }, { disconnectClientSockets, syncClientProjectCredentials });
   if (result.project) {
     emitProjectMutation(req, result.duplicate ? 'updated' : 'created', result.project, {
@@ -189,7 +204,33 @@ async function rejectSubmission(id, reason, admin, req = null) {
     throw new ValidationError('This submission was already approved and cannot be rejected.', 409);
   }
 
-  const cleanReason = typeof reason === 'string' ? reason.trim().slice(0, 500) : null;
+  const cleanReason = typeof reason === 'string' && reason.trim()
+    ? reason.trim().slice(0, 500)
+    : 'Invalid transaction ID, mismatched amount, or unclear proof of payment.';
+  const recipientEmail = details.email ?? alert.userEmail;
+  const recipientName = details.clientName ?? details.name ?? alert.userName ?? 'there';
+
+  let emailSent = false;
+  if (recipientEmail) {
+    try {
+      const dispatchResult = await sendEmail({
+        to: recipientEmail,
+        subject: 'Action required: payment verification failed',
+        html: `<div style="font-family:Arial,sans-serif;padding:24px;color:#17140f;max-width:580px;margin:auto">
+          <h2 style="color:#c93d1b">Payment verification unsuccessful</h2>
+          <p>Hi <strong>${escapeHtml(recipientName)}</strong>,</p>
+          <p>We could not verify your recent QR/UPI payment submission${details.transactionRef ? ` (Ref: <code>${escapeHtml(details.transactionRef)}</code>)` : ''}.</p>
+          <p><strong>Reason:</strong> ${escapeHtml(cleanReason)}</p>
+          <p>Please review your receipt and resubmit on the <a href="${escapeHtml(portalUrl('/payment'))}">payment page</a> or contact support at <a href="mailto:${escapeHtml(getSupportEmail())}">${escapeHtml(getSupportEmail())}</a>.</p>
+        </div>`,
+        text: `Hi ${recipientName},\n\nWe could not verify your recent payment submission. Reason: ${cleanReason}\n\nPlease resubmit or contact support at ${getSupportEmail()}.`,
+        replyTo: getSupportEmail(),
+      });
+      emailSent = Boolean(dispatchResult?.success && !dispatchResult?.manualRequired);
+    } catch (mailErr) {
+      console.error('[qr] rejection email failed:', mailErr?.message ?? mailErr);
+    }
+  }
 
   await prisma.adminAlert.update({
     where: { id: alert.id },
@@ -200,6 +241,7 @@ async function rejectSubmission(id, reason, admin, req = null) {
         rejectedAt: new Date().toISOString(),
         rejectedBy: admin?.id ?? null,
         reason: cleanReason,
+        emailSent,
       },
     },
   });
@@ -207,9 +249,9 @@ async function rejectSubmission(id, reason, admin, req = null) {
   await createAlert({
     type: 'qr_submission',
     severity: 'info',
-    userEmail: alert.userEmail,
-    message: `QR payment rejected for ${alert.userEmail}${cleanReason ? `: ${cleanReason}` : ''}.`,
-    details: { submissionId: alert.id, reason: cleanReason },
+    userEmail: recipientEmail,
+    message: `QR payment rejected for ${recipientEmail}${cleanReason ? `: ${cleanReason}` : ''}.`,
+    details: { submissionId: alert.id, reason: cleanReason, emailSent },
     source: 'qr',
     notify: false,
   });
@@ -218,12 +260,12 @@ async function rejectSubmission(id, reason, admin, req = null) {
     action: AUDIT_ACTIONS.QR_PAYMENT_REJECTED,
     actorId: admin?.id ?? null,
     actorRole: admin?.role ?? 'admin',
-    targetEmail: alert.userEmail ?? null,
+    targetEmail: recipientEmail ?? null,
     req,
-    metadata: { submissionId: alert.id, reason: cleanReason },
+    metadata: { submissionId: alert.id, reason: cleanReason, emailSent },
   });
 
-  return { submissionId: alert.id };
+  return { submissionId: alert.id, emailSent };
 }
 
 export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadLimiter, resolveAdvanceFloor, disconnectClientSockets = () => {}, syncClientProjectCredentials = async () => {} } = {}) {
@@ -271,6 +313,13 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
       const serviceName = body.serviceName ? String(body.serviceName).trim().slice(0, 200) : null;
       const notes = body.notes ? String(body.notes).trim().slice(0, 1000) : null;
       const currency = String(body.currency ?? 'INR').trim().slice(0, 8) || 'INR';
+      const projectId = body.projectId ? String(body.projectId).trim().slice(0, 80) : null;
+      const isRemainingPayment = Boolean(
+       body.isRemainingPayment === true ||
+       body.isRemainingPayment === 'true' ||
+       projectId ||
+       /remaining balance/i.test(String(notes ?? ''))
+      );
 
       // [40% SERVER FLOOR] Service select ho aur remaining-balance payment na ho to minimum advance enforce karo.
       if (body.isRemainingPayment !== true && typeof resolveAdvanceFloor === 'function') {
@@ -305,6 +354,8 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
           transactionId: transactionRef,
           screenshotUrl,
           serviceName,
+          projectId,          
+       isRemainingPayment,
           notes,
           status: 'pending',
         },

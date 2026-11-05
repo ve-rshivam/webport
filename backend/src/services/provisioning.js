@@ -58,6 +58,7 @@ export async function issueTemporaryCredentials(user, {
       lastActiveAt: null,
     },
   });
+
   await syncClientProjectCredentials({
     email: updated.email,
     passwordHash: tempPasswordHash,
@@ -139,6 +140,7 @@ export async function provisionFromPayment(input, {
       throw new ValidationError('Payment amount exceeds the verified project valuation.');
     }
   }
+}
 
   const user = await prisma.user.upsert({
     where: { email },
@@ -148,9 +150,36 @@ export async function provisionFromPayment(input, {
 
   let project = null;
 
-  if (input.isRemainingPayment && input.projectId) {
-    const target = await prisma.clientProject.findUnique({ where: { id: input.projectId } });
-    if (!target) throw new ValidationError('The project for this payment no longer exists.', 404);
+  if (input.isRemainingPayment) {
+    let target = input.projectId
+      ? await prisma.clientProject.findUnique({ where: { id: input.projectId } })
+      : null;
+
+    // Fallback: Find latest project with pending balance for this email
+    if (!target) {
+      target = await prisma.clientProject.findFirst({
+        where: {
+          OR: [{ clientUserId: user.id }, { clientEmail: { equals: email, mode: 'insensitive' } }],
+          balanceDue: { gt: 0 },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+    if (input.isRemainingPayment) {
+    let target = input.projectId
+      ? await prisma.clientProject.findUnique({ where: { id: input.projectId } })
+      : null;
+
+    if (!target) {
+      target = await prisma.clientProject.findFirst({
+        where: {
+          OR: [{ clientUserId: user.id }, { clientEmail: { equals: email, mode: 'insensitive' } }],
+          balanceDue: { gt: 0 },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+    if (!target) throw new ValidationError('No active project with an outstanding balance was found for this client.', 404);
 
     const amountPaid = target.amountPaid + projectAmount;
     const balanceDue = Math.max(target.totalCost - amountPaid, 0);
@@ -222,7 +251,9 @@ export async function provisionFromPayment(input, {
   let session = null;
   let credentials = { emailSent: false, temporaryPassword: null, manualRequired: false, manualPasscode: null };
 
-  if (!input.isRemainingPayment) {
+  const hasActivePermanentPassword = Boolean(user.passwordHash && !user.mustChangePassword);
+
+  if (!input.isRemainingPayment && !hasActivePermanentPassword) {
     credentials = await issueTemporaryCredentials(user, {
       projectTitle: project.projectTitle,
       disconnectClientSockets,
@@ -233,6 +264,17 @@ export async function provisionFromPayment(input, {
     } catch (err) {
       console.error('[provisioning] session issue failed:', err?.message ?? err);
     }
+  } else if (input.isRemainingPayment) {
+    await sendTopUpReceipt({
+      to: user.email,
+      name: user.name,
+      amount: projectAmount,
+      currency: project.currency ?? 'INR',
+      projectTitle: project.projectTitle,
+    });
+    credentials.emailSent = true;
+  } else {
+    credentials.emailSent = true;
   }
 
   await createAlert({
@@ -321,9 +363,15 @@ export async function sendTopUpReceipt({ to, name, amount, currency, projectTitl
     await sendEmail({
       to,
       subject: 'Payment received — balance updated',
-      html: `<p>Hi ${escapeHtml(name || 'there')},</p><p>We received your payment of <strong>${escapeHtml(currency)} ${escapeHtml(amount)}</strong>${projectTitle ? ` for <strong>${escapeHtml(projectTitle)}</strong>` : ''}. Your project balance has been updated.</p><p><a href="${portalUrl('/portal')}">Open the client portal</a></p>`,
-      text: `Hi ${name || 'there'},\n\nWe received your payment of ${currency} ${amount}${projectTitle ? ` for ${projectTitle}` : ''}. Your project balance has been updated.\n\n${portalUrl('/portal')}`,
-      surface: 'noreply',
+      html: `
+        <div style="font-family: Arial, sans-serif; padding: 20px; background: #f9f9f9; border-radius: 8px;">
+          <h2 style="color: #00bcd4;">Payment Successfully Applied</h2>
+          <p>Hi <strong>${escapeHtml(name || 'there')}</strong>,</p>
+          <p>We received your payment of <strong>${escapeHtml(currency)} ${escapeHtml(amount)}</strong>${projectTitle ? ` for <strong>${escapeHtml(projectTitle)}</strong>` : ''}. Your project balance has been updated.</p>
+          <p>You can check your updated progress and project status anytime in the <a href="${escapeHtml(portalUrl('/portal'))}">Client Portal</a>.</p>
+        </div>
+      `,
+      text: `Hi ${name || 'there'},\n\nWe received your payment of ${currency} ${amount}${projectTitle ? ` for ${projectTitle}` : ''}. Your project balance has been updated.\n\nOpen the client portal: ${portalUrl('/portal')}`,
       replyTo: getSupportEmail(),
     });
   } catch (err) {

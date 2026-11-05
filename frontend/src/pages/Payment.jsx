@@ -214,6 +214,8 @@ const Payment = () => {
           amount,
           transactionRef,
           screenshotUrl,
+          projectId: clientDetails.projectId || portalData.projectId || null,
+          isRemainingPayment: Boolean(isRemainingPayment),
           notes: `Service: ${clientDetails.service}${
             clientDetails.phone ? ` | Phone: ${clientDetails.phone}` : ''
           }${isRemainingPayment ? ' | Remaining balance' : ''}`,

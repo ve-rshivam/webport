@@ -91,7 +91,7 @@ export function createWebhookRouter({ resolvePaypalPayment, disconnectClientSock
         await sendTopUpReceipt({
           to: normalized.email,
           name: normalized.name,
-          amount: provisionInput.projectAmount ?? normalized.amount,
+          amount: normalized.projectAmount ?? normalized.amount,
           currency: result.project.currency ?? normalized.currency,
           projectTitle: result.project.projectTitle,
         });
