@@ -227,14 +227,21 @@ export function createInvoiceAdminRouter({
         ? `Payment Verified & Balance Cleared: ${updatedProject.projectTitle}`
         : `Project Approved & Invoice / SOW: ${updatedProject.projectTitle}`;
 
+      const setupLink = provisioningResult?.manualPasscode 
+        ? `${portalLink}?email=${encodeURIComponent(updatedProject.clientEmail)}&passcode=${encodeURIComponent(provisioningResult.manualPasscode)}&setup=true`
+        : portalLink;
+
       const deliveryResult = await sendEmail({
         to: updatedProject.clientEmail,
         subject: emailSubject,
         html: `<p>Hello ${escapeHtml(updatedProject.clientName || 'there')},</p>
                <p>Your payment for <strong>${escapeHtml(updatedProject.projectTitle)}</strong> has been verified.</p>
                <p>Total Valuation: ₹${updatedProject.totalCost}<br>Paid to date: ₹${updatedProject.amountPaid}<br>Remaining Due: ₹${updatedProject.balanceDue}</p>
-               <p>Access your portal: <a href="${escapeHtml(portalLink)}">${escapeHtml(portalLink)}</a></p>`,
-        text: `Hello ${updatedProject.clientName || 'there'},\n\nPayment verified for ${updatedProject.projectTitle}.\nTotal: ₹${updatedProject.totalCost}\nPaid: ₹${updatedProject.amountPaid}\nRemaining: ₹${updatedProject.balanceDue}\nPortal: ${portalLink}`,
+               ${provisioningResult?.manualPasscode 
+                 ? `<div style="margin: 25px 0;"><a href="${escapeHtml(setupLink)}" style="background-color: #00bcd4; color: #fff; padding: 14px 28px; text-decoration: none; font-weight: bold; border-radius: 8px; display: inline-block; font-size: 16px;">Set Password & Open Portal ➔</a></div><p style="font-size: 12px; color: #666;">(Or login manually with passcode: <strong>${escapeHtml(provisioningResult.manualPasscode)}</strong>)</p>`
+                 : `<div style="margin: 25px 0;"><a href="${escapeHtml(portalLink)}" style="background-color: #00bcd4; color: #fff; padding: 14px 28px; text-decoration: none; font-weight: bold; border-radius: 8px; display: inline-block; font-size: 16px;">Open Client Portal ➔</a></div>`
+               }`,
+        text: `Hello ${updatedProject.clientName || 'there'},\n\nPayment verified for ${updatedProject.projectTitle}.\nTotal: ₹${updatedProject.totalCost}\nPaid: ₹${updatedProject.amountPaid}\nRemaining: ₹${updatedProject.balanceDue}\n${provisioningResult?.manualPasscode ? `\nSet your password here: ${setupLink}\n` : `\nPortal: ${portalLink}\n`}`,
         attachments: pdfBuffer ? [{ filename: `Invoice-${invoiceNumber}.pdf`, content: pdfBuffer, contentType: 'application/pdf' }] : [],
         plainPasscode: provisioningResult?.manualRequired ? provisioningResult.manualPasscode : null,
       });
@@ -407,12 +414,15 @@ export function createManualClientProjectRouter({ verifyAdminToken, checkPerm, g
       const deliverables = features.length
         ? features.map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')
         : '<li>Project scope will be confirmed with your developer.</li>';
-      const passwordBlock = createdAccount
-        ? `<p><strong>Temporary password:</strong> ${escapeHtml(temporaryPassword)}</p><p>Please change this password after your first sign-in.</p>`
-        : '<p>Use your existing portal password. If you need access help, use the password reset option on the portal.</p>';
-      const textPassword = createdAccount
-        ? `Temporary password: ${temporaryPassword}\nPlease change this password after your first sign-in.`
-        : 'Use your existing portal password. If you need access help, use the password reset option on the portal.';
+      const magicSetupLink = `${loginUrl}?email=${encodeURIComponent(clientEmail)}&passcode=${encodeURIComponent(temporaryPassword)}&setup=true`;
+
+      const passwordBlock = createdAccount
+        ? `<div style="margin: 25px 0;"><a href="${escapeHtml(magicSetupLink)}" style="background-color: #00bcd4; color: #fff; padding: 14px 28px; text-decoration: none; font-weight: bold; border-radius: 8px; display: inline-block; font-size: 16px;">Create Password & Access Portal ➔</a></div><p style="font-size: 12px; color: #666;">(Or login manually with passcode: <strong>${escapeHtml(temporaryPassword)}</strong>)</p>`
+        : `<div style="margin: 25px 0;"><a href="${escapeHtml(loginUrl)}" style="background-color: #00bcd4; color: #fff; padding: 14px 28px; text-decoration: none; font-weight: bold; border-radius: 8px; display: inline-block; font-size: 16px;">Open Client Portal ➔</a></div><p style="font-size: 13px; color: #555;">Use your existing portal password. If you need access help, use the password reset option on the portal.</p>`;
+        
+      const textPassword = createdAccount
+        ? `Set your password here: ${magicSetupLink}`
+        : 'Use your existing portal password.';
       // [INVOICE PDF] Memory buffer
       let invoicePdf = null;
       try {
