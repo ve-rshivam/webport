@@ -1,4 +1,3 @@
-
 import { prisma } from '../lib/prisma.js';
 import { ValidationError, validateEmail } from './validators.js';
 import {
@@ -141,7 +140,6 @@ export async function provisionFromPayment(input, {
     }
   }
 
-
   const user = await prisma.user.upsert({
     where: { email },
     update: { name: input.name ?? undefined },
@@ -165,21 +163,10 @@ export async function provisionFromPayment(input, {
         orderBy: { createdAt: 'desc' },
       });
     }
-    if (input.isRemainingPayment) {
-    let target = input.projectId
-      ? await prisma.clientProject.findUnique({ where: { id: input.projectId } })
-      : null;
 
     if (!target) {
-      target = await prisma.clientProject.findFirst({
-        where: {
-          OR: [{ clientUserId: user.id }, { clientEmail: { equals: email, mode: 'insensitive' } }],
-          balanceDue: { gt: 0 },
-        },
-        orderBy: { createdAt: 'desc' },
-      });
+      throw new ValidationError('No active project with an outstanding balance was found for this client.', 404);
     }
-    if (!target) throw new ValidationError('No active project with an outstanding balance was found for this client.', 404);
 
     const amountPaid = target.amountPaid + projectAmount;
     const balanceDue = Math.max(target.totalCost - amountPaid, 0);
@@ -215,7 +202,7 @@ export async function provisionFromPayment(input, {
         lastUpdated: new Date(),
       },
     });
-  }
+  } // <-- FIX: this closing brace for the `else` block was missing
 
   let payment;
   const paymentData = {
@@ -230,7 +217,7 @@ export async function provisionFromPayment(input, {
   };
 
   try {
-            payment = existing
+    payment = existing
       ? await prisma.payment.update({ where: { id: existing.id }, data: paymentData })
       : await prisma.payment.create({
           data: {
@@ -375,6 +362,6 @@ export async function sendTopUpReceipt({ to, name, amount, currency, projectTitl
       replyTo: getSupportEmail(),
     });
   } catch (err) {
-    console.error('[provisioh ning] receipt email failed:', err?.message ?? err);
+    console.error('[provisioning] receipt email failed:', err?.message ?? err);
   }
 }
