@@ -5,6 +5,9 @@ import RefundRules from './RefundRules';
 import { PageShell, buttonClass } from '../components/Editorial';
 
 const primaryButtonClass = `${buttonClass} bg-[var(--ink)] text-[var(--paper)] hover:bg-[var(--signal)] hover:text-white hover:border-[var(--signal)]`;
+
+const secondaryButtonClass =
+  'inline-flex items-center justify-center gap-2 border border-[var(--ink)] px-5 py-3 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--signal)]';
 import { apiRequest, apiUrl } from '../lib/api';
 import { SUPPORT_EMAIL } from '../lib/contact';
 import { PayPalScriptProvider, PayPalButtons } from '@paypal/react-paypal-js';
@@ -596,10 +599,10 @@ const Payment = () => {
                         </p>
                       </div>
 
-                      <label className="mt-6 block">
+                      <label className="mt-6 block max-w-md">
                         <span className="mb-3 flex items-baseline justify-between font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
                           <span>Payment now</span>
-                          <span>Minimum 40%</span>
+                          <span className="text-[var(--ink)]">{paymentPercent}%</span>
                         </span>
                         <input
                           type="range"
@@ -610,6 +613,9 @@ const Payment = () => {
                           onChange={(e) => setPaymentPercent(Number(e.target.value))}
                           className="w-full cursor-pointer accent-[var(--signal)]"
                         />
+                        <span className="mt-1 block font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
+                          Minimum 40%
+                        </span>
                       </label>
 
                       <div className="mt-5 flex flex-wrap items-baseline justify-between gap-3 border-t border-[var(--rule)] pt-4 text-sm">
@@ -658,7 +664,7 @@ const Payment = () => {
                       {upiPaymentUrl && (
                         <a
                           href={upiPaymentUrl}
-                          className="mt-4 inline-flex items-center gap-2 border-b border-[var(--ink)] pb-1 text-sm font-medium text-[var(--ink)] transition-colors hover:border-[var(--signal)] hover:text-[var(--signal)]"
+                          className={`${secondaryButtonClass} mt-4`}
                         >
                           Pay via UPI app
                         </a>
@@ -668,22 +674,24 @@ const Payment = () => {
                 </div>
 
                 <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
-                  <div className="border border-[var(--rule)] p-6">
-                    <p className="eyebrow text-[var(--ink-soft)]">Cards / netbanking</p>
+                  <div className="flex h-full flex-col border border-[var(--rule)] p-6">
+                    <p className="eyebrow text-[var(--ink-soft)]">Cards</p>
                     <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
-                      Secured by Razorpay. UPI and cards supported.
+                      Secured by Razorpay. Cards, UPI and netbanking supported.
                     </p>
-                    <button
-                      type="button"
-                      onClick={handleRazorpayPayment}
-                      disabled={verificationPending}
-                      className={`${primaryButtonClass} mt-4 w-full disabled:cursor-not-allowed disabled:opacity-60`}
-                    >
-                      {verificationPending ? 'Verifying payment…' : 'Pay with Razorpay'}
-                    </button>
+                    <div className="mt-auto pt-4">
+                      <button
+                        type="button"
+                        onClick={handleRazorpayPayment}
+                        disabled={verificationPending}
+                        className={`${primaryButtonClass} w-full disabled:cursor-not-allowed disabled:opacity-60`}
+                      >
+                        {verificationPending ? 'Verifying payment…' : 'Pay with Razorpay'}
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="border border-[var(--rule)] p-6">
+                  <div className="flex h-full flex-col border border-[var(--rule)] p-6">
                     <p className="eyebrow text-[var(--ink-soft)]">International</p>
                     <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
                       Pay in USD through PayPal.
@@ -701,7 +709,7 @@ const Payment = () => {
                         </>
                       )}
                     </p>
-                    <div className="mt-4">
+                    <div className="mt-auto pt-4">
                       <PayPalScriptProvider
                         options={{
                           'client-id': import.meta.env.VITE_PAYPAL_CLIENT_ID || 'sb',
@@ -764,9 +772,15 @@ const Payment = () => {
               </div>
 
               <div className="col-span-12 lg:col-span-5">
-                <div className="border border-[var(--rule)] p-6">
-                  <p className="eyebrow text-[var(--ink-soft)]">Already paid by UPI?</p>
-                  <h2 className="mt-3 font-display text-2xl leading-tight text-[var(--ink)]">
+                <details className="group border border-[var(--rule)] p-6">
+                  <summary className="flex cursor-pointer list-none items-baseline justify-between gap-3 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors hover:text-[var(--ink)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--signal)] [&::-webkit-details-marker]:hidden">
+                    Already paid by UPI?
+                    <span aria-hidden="true" className="text-base leading-none">
+                      <span className="group-open:hidden">+</span>
+                      <span className="hidden group-open:inline">−</span>
+                    </span>
+                  </summary>
+                  <h2 className="mt-4 font-display text-2xl leading-tight text-[var(--ink)]">
                     Submit the transaction.
                   </h2>
                   <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
@@ -795,7 +809,7 @@ const Payment = () => {
 
                     <label className="block">
                       <span className="eyebrow mb-2 block text-[var(--ink-soft)]">
-                        Amount to pay (INR)
+                        Amount (INR)
                       </span>
                       <input
                         type="number"
@@ -838,7 +852,7 @@ const Payment = () => {
                     <button
                       type="submit"
                       disabled={isVerifySubmitting}
-                      className={`${primaryButtonClass} w-full disabled:cursor-not-allowed disabled:opacity-60`}
+                      className={`${secondaryButtonClass} w-full disabled:cursor-not-allowed disabled:opacity-60`}
                     >
                       {isVerifySubmitting ? 'Submitting…' : 'Submit details'}
                     </button>
@@ -855,7 +869,7 @@ const Payment = () => {
                       </p>
                     )}
                   </form>
-                </div>
+                </details>
 
                 <div className="mt-8 border-t border-[var(--rule)] pt-6">
                   <div className="flex flex-wrap items-baseline justify-between gap-2">

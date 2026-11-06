@@ -10,6 +10,11 @@ const NAV_ITEMS = [
   { label: 'Experience', path: '/experience', index: '04' },
 ];
 
+const HEADER_ACTION_BASE =
+  'items-center gap-2 border px-3 py-2 font-mono-ui text-label uppercase tracking-[0.16em] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--signal)]';
+const HEADER_ACTION_SOFT = `${HEADER_ACTION_BASE} border-[var(--rule)] text-[var(--ink-soft)] hover:border-[var(--ink)] hover:text-[var(--ink)]`;
+const HEADER_ACTION_STRONG = `${HEADER_ACTION_BASE} border-[var(--ink)] text-[var(--ink)] hover:bg-[var(--ink)] hover:text-[var(--paper)]`;
+
 const Navbar = () => {
   const { theme, toggleTheme } = useContext(ThemeContext);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -78,7 +83,7 @@ const Navbar = () => {
             type="button"
             onClick={() => window.dispatchEvent(new Event('chat_open'))}
             aria-haspopup="dialog"
-            className="hidden items-center gap-2 border border-[var(--rule)] px-3 py-2 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors hover:border-[var(--ink)] hover:text-[var(--ink)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--signal)] sm:inline-flex"
+            className={`hidden sm:inline-flex ${HEADER_ACTION_SOFT}`}
           >
             Ask
             <span aria-hidden="true">↗</span>
@@ -86,7 +91,7 @@ const Navbar = () => {
 
           <Link
             to="/contact"
-            className="hidden items-center gap-2 border border-[var(--ink)] px-3 py-2 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)] md:inline-flex"
+            className={`hidden md:inline-flex ${HEADER_ACTION_STRONG}`}
           >
             Contact
             <span aria-hidden="true">→</span>
@@ -96,7 +101,7 @@ const Navbar = () => {
             type="button"
             onClick={toggleTheme}
             aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-            className="inline-flex items-center gap-2 border border-[var(--rule)] px-3 py-2 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors hover:border-[var(--ink)] hover:text-[var(--ink)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--signal)]"
+            className={`inline-flex ${HEADER_ACTION_SOFT}`}
           >
             <span aria-hidden="true">{theme === 'dark' ? '☀' : '☾'}</span>
             <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
