@@ -97,7 +97,7 @@ const Navbar = () => {
             aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
             className="inline-flex items-center gap-2 border border-[var(--rule)] px-3 py-2 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors hover:border-[var(--ink)] hover:text-[var(--ink)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--signal)]"
           >
-            <span aria-hidden="true">{theme === 'dark' ? '☾' : '☀'}</span>
+            <span aria-hidden="true">{theme === 'dark' ? '☀' : '☾'}</span>
             <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
           </button>
 

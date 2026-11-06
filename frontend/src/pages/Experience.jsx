@@ -28,7 +28,7 @@ const Experience = () => {
   return (
     <PageShell>
       <PageIntro
-        index="02"
+        index="04"
         label="Experience"
         title="A short professional record."
         intro="Roles, collaborations and the work that shaped how I build software."
@@ -36,7 +36,7 @@ const Experience = () => {
 
       <section className="py-12 md:py-16">
         {status === 'loading' && (
-          <p className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)]">
+          <p className="font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)]">
             Loading record…
           </p>
         )}
@@ -54,23 +54,21 @@ const Experience = () => {
             {experiences.map((experience, index) => (
               <li
                 key={experience._id || index}
-                className="grid grid-cols-12 gap-x-6 gap-y-3 border-b border-[var(--rule)] py-8 md:py-10"
+                className="border-b border-[var(--rule)] py-8 md:py-10"
               >
-                <span className="col-span-12 font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)] sm:col-span-3">
+                <p className="font-mono-ui text-label tracking-[0.14em] text-[var(--ink-soft)]">
                   {experience.duration || '—'}
-                </span>
+                </p>
 
-                <div className="col-span-12 sm:col-span-9">
-                  <h2 className="font-display text-3xl leading-none text-[var(--ink)] md:text-4xl">
-                    {experience.role || 'Software Engineer'}
-                  </h2>
-                  <p className="mt-2 text-sm text-[var(--signal)]">
-                    {experience.company || 'Independent'}
-                  </p>
-                  <p className="mt-4 max-w-2xl text-sm leading-relaxed text-[var(--ink-soft)]">
-                    {experience.description || 'Details available on request.'}
-                  </p>
-                </div>
+                <h2 className="mt-2 font-display text-heading leading-none text-[var(--ink)]">
+                  {experience.role || 'Software Engineer'}
+                </h2>
+                <p className="mt-2 text-sm text-[var(--signal)]">
+                  {experience.company || 'Independent'}
+                </p>
+                <p className="mt-4 max-w-2xl text-sm leading-relaxed text-[var(--ink-soft)]">
+                  {experience.description || 'Details available on request.'}
+                </p>
               </li>
             ))}
           </ul>

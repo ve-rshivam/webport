@@ -51,7 +51,7 @@ const Elsewhere = () => (
           <a
             href={social.url}
             {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}
-            className="group flex flex-col text-sm text-[var(--ink-soft)] transition-colors hover:text-[var(--signal)]"
+            className="group flex flex-col text-sm text-[var(--ink-soft)] underline decoration-[var(--rule)] underline-offset-4 transition-colors hover:text-[var(--signal)] hover:decoration-[var(--signal)]"
           >
             <span>
               {social.label}
@@ -116,7 +116,7 @@ const Footer = () => {
                     <li key={`${group.title}-${link.path}`}>
                       <Link
                         to={link.path}
-                        className="text-sm text-[var(--ink-soft)] transition-colors hover:text-[var(--signal)]"
+                        className="text-sm text-[var(--ink-soft)] underline decoration-[var(--rule)] underline-offset-4 transition-colors hover:text-[var(--signal)] hover:decoration-[var(--signal)]"
                       >
                         {link.label}
                       </Link>
