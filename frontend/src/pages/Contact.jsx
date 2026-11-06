@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { apiGet, apiUrl } from '../lib/api';
 import { CONTACT_EMAIL, emailHref } from '../lib/contact';
 import {
-  ArrowLink,
   PageIntro,
   PageShell,
   buttonClass,
@@ -17,6 +17,8 @@ const SOCIALS = [
   ...(CONTACT_EMAIL ? [{ name: 'Email', url: emailHref(CONTACT_EMAIL) }] : []),
   { name: 'Twitter / X', url: 'https://x.com/ve8rshivam' },
 ];
+
+const submitClass = `${buttonClass} bg-[var(--ink)] text-[var(--paper)] hover:bg-[var(--signal)] hover:text-white hover:border-[var(--signal)]`;
 
 const Contact = () => {
   const [result, setResult] = useState('');
@@ -78,7 +80,7 @@ const Contact = () => {
       />
 
       <div className="grid grid-cols-12 gap-x-8 gap-y-12 py-12 md:py-16">
-        <div className="col-span-12 md:col-span-7">
+        <div className="col-span-12 md:col-span-6">
           <form onSubmit={onSubmit} className="border-t border-[var(--rule)]">
             <div className="grid grid-cols-1 gap-6 border-b border-[var(--rule)] py-6 sm:grid-cols-2">
               <div>
@@ -141,7 +143,7 @@ const Contact = () => {
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-4 pt-6">
-              <button type="submit" disabled={isSending} className={buttonClass}>
+              <button type="submit" disabled={isSending} className={submitClass}>
                 {isSending ? 'Sending…' : 'Send message'}
               </button>
               <p className="max-w-sm text-sm text-[var(--ink-soft)]" role="status">
@@ -151,7 +153,7 @@ const Contact = () => {
           </form>
         </div>
 
-        <aside className="col-span-12 md:col-span-5 md:pl-8">
+        <aside className="col-span-12 md:col-span-6 md:col-start-7">
           <div className="border-t border-[var(--rule)] pt-6">
             <p className="eyebrow text-[var(--signal)]">Direct</p>
             <p className="mt-3 max-w-sm text-sm leading-relaxed text-[var(--ink-soft)]">
@@ -166,9 +168,10 @@ const Contact = () => {
                     href={social.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="group flex items-baseline justify-between py-3 text-sm text-[var(--ink)] transition-colors hover:text-[var(--signal)]"
+                    className="group flex items-baseline justify-between gap-4 py-2.5 text-sm text-[var(--ink)] transition-colors hover:text-[var(--signal)]"
                   >
                     {social.name}
+                    <span aria-hidden="true">↗</span>
                   </a>
                 </li>
               ))}
@@ -179,18 +182,33 @@ const Contact = () => {
                     href={link.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="group flex items-baseline justify-between py-3 text-sm text-[var(--ink)] transition-colors hover:text-[var(--signal)]"
+                    className="group flex items-baseline justify-between gap-4 py-2.5 text-sm text-[var(--ink)] transition-colors hover:text-[var(--signal)]"
                   >
                     {link.title}
+                    <span aria-hidden="true">↗</span>
                   </a>
                 </li>
               ))}
-            </ul>
 
-            <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
-              <ArrowLink to="/services">Services</ArrowLink>
-              <ArrowLink to="/reviews">Reviews</ArrowLink>
-            </div>
+              <li className="border-b border-[var(--rule)]">
+                <Link
+                  to="/services"
+                  className="group flex items-baseline justify-between gap-4 py-2.5 text-sm text-[var(--ink)] transition-colors hover:text-[var(--signal)]"
+                >
+                  Services
+                  <span aria-hidden="true">↗</span>
+                </Link>
+              </li>
+              <li className="border-b border-[var(--rule)]">
+                <Link
+                  to="/reviews"
+                  className="group flex items-baseline justify-between gap-4 py-2.5 text-sm text-[var(--ink)] transition-colors hover:text-[var(--signal)]"
+                >
+                  Reviews
+                  <span aria-hidden="true">↗</span>
+                </Link>
+              </li>
+            </ul>
           </div>
         </aside>
       </div>

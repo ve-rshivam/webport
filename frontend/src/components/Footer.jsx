@@ -53,9 +53,9 @@ const Elsewhere = () => (
             {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}
             className="group flex flex-col text-sm text-[var(--ink-soft)] underline decoration-[var(--rule)] underline-offset-4 transition-colors hover:text-[var(--signal)] hover:decoration-[var(--signal)]"
           >
-            <span>
+            <span className="inline-flex items-baseline gap-1.5">
               {social.label}
-              {external ? ' ' : ''}
+              {external && <span aria-hidden="true">↗</span>}
             </span>
             <span className="font-mono-ui text-label tracking-[0.06em] text-[var(--ink-soft)] group-hover:text-[var(--signal)]">
               {social.handle}
