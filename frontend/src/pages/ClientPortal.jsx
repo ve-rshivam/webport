@@ -417,7 +417,10 @@ function ClientPortal() {
   };
 
   const buttonClass =
-    'inline-flex items-center justify-center rounded-lg border border-[var(--rule)] bg-[var(--ink)] px-5 py-2.5 text-sm font-medium text-[var(--paper)] transition-colors hover:bg-[var(--ink-soft)] focus:outline-none focus:ring-2 focus:ring-[var(--signal)] focus:ring-offset-2 focus:ring-offset-[var(--paper)]';
+    'inline-flex items-center justify-center rounded-lg border border-[var(--rule)] bg-[var(--ink)] px-5 py-2.5 text-sm font-medium text-[var(--paper)] transition-colors hover:bg-[var(--ink-soft)] focus:outline-none focus:ring-2 focus:ring-[var(--signal)] focus:ring-offset-2 focus:ring-offset-[var(--paper)] disabled:cursor-not-allowed disabled:opacity-50';
+
+  const secondaryButtonClass =
+    'inline-flex items-center justify-center rounded-lg border border-[var(--ink)] bg-transparent px-5 py-2.5 text-sm font-medium text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)] focus:outline-none focus:ring-2 focus:ring-[var(--signal)] focus:ring-offset-2 focus:ring-offset-[var(--paper)] disabled:cursor-not-allowed disabled:opacity-50';
 
   const fieldClass =
     'w-full rounded-lg border border-[var(--rule)] bg-[var(--paper)] px-3 py-2 text-sm text-[var(--ink)] placeholder-[var(--ink-soft)] transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--signal)] focus:border-transparent';
@@ -426,7 +429,7 @@ function ClientPortal() {
 
   return (
     <PageWrapper>
-      <div className="mx-auto min-h-screen max-w-6xl px-5 pb-16 sm:px-8">
+      <div className="mx-auto min-h-screen w-full max-w-[1440px] px-6 pb-16 md:px-10">
         <header className="mb-10 flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="eyebrow text-[var(--signal)]">Client portal</p>
@@ -465,7 +468,7 @@ function ClientPortal() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
-              className="rounded-2xl border border-[var(--rule)] bg-[var(--paper)] p-6 md:p-10"
+              className="max-w-2xl rounded-2xl border border-[var(--rule)] bg-[var(--paper)] p-6 md:p-10"
             >
               <form onSubmit={handleLogin} className="flex flex-col gap-5">
                 <div>
@@ -516,13 +519,15 @@ function ClientPortal() {
                   <span className="text-sm text-[var(--ink-soft)]">or</span>
                 </p>
 
-                <button
-                  type="button"
-                  onClick={() => setShowForgot(true)}
-                  className="justify-center text-sm text-[var(--signal)] underline underline-offset-2 hover:opacity-80"
-                >
-                  Forgot your password?
-                </button>
+                {!showForgot && (
+                  <button
+                    type="button"
+                    onClick={() => setShowForgot(true)}
+                    className="justify-center text-sm text-[var(--signal)] underline underline-offset-2 hover:opacity-80"
+                  >
+                    Forgot your password?
+                  </button>
+                )}
 
                 <AnimatePresence>
                   {showForgot && (
@@ -534,9 +539,22 @@ function ClientPortal() {
                       className="overflow-hidden"
                     >
                       <div className="border-t border-[var(--rule)] pt-6">
-                        <p className="text-sm font-medium text-[var(--ink)]">
-                          Reset your password
-                        </p>
+                        <div className="flex items-start justify-between gap-4">
+                          <p className="text-sm font-medium text-[var(--ink)]">
+                            Reset your password
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowForgot(false);
+                              setForgotMsg('');
+                              setForgotError('');
+                            }}
+                            className="shrink-0 text-sm text-[var(--ink-soft)] underline underline-offset-2 transition-colors hover:text-[var(--signal)]"
+                          >
+                            Cancel
+                          </button>
+                        </div>
                         <p className="mt-1 text-xs text-[var(--ink-soft)]">
                           Enter the email on file. If that email is registered, we will send a
                           secure single-use reset link that expires in 15 minutes.
@@ -544,37 +562,21 @@ function ClientPortal() {
 
                         {!forgotMsg && !resetToken && (
                           <div className="mt-4">
-                            <div className="relative">
-                              <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                                <svg
-                                  className="h-4 w-4 text-[var(--ink-soft)]"
-                                  fill="none"
-                                  viewBox="0 0 24 24"
-                                  stroke="currentColor"
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={1.5}
-                                    d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
-                                  />
-                                </svg>
-                              </span>
-                              <input
-                                type="email"
-                                required
-                                className={`${fieldClass} pl-10`}
-                                placeholder="Email on file"
-                                value={forgotEmail}
-                                onChange={(e) => setForgotEmail(e.target.value)}
-                              />
-                            </div>
+                            <input
+                              type="email"
+                              required
+                              aria-label="Email on file"
+                              className={fieldClass}
+                              placeholder="Email on file"
+                              value={forgotEmail}
+                              onChange={(e) => setForgotEmail(e.target.value)}
+                            />
                             <div className="mt-4 flex gap-3">
                               <button
                                 type="button"
                                 onClick={handleForgotPassword}
                                 disabled={forgotLoading || !forgotEmail}
-                                className={`${buttonClass} flex-1`}
+                                className={`${secondaryButtonClass} flex-1`}
                               >
                                 {forgotLoading ? 'Sending…' : 'Send reset link'}
                               </button>
