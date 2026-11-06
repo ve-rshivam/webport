@@ -45,17 +45,18 @@ const SOCIAL_LINKS = [
 const Elsewhere = () => (
   <ul className="mt-4 space-y-3">
     {SOCIAL_LINKS.map((social) => {
-      const external = social.url.startsWith('http');
+      const opensNewTab = social.url.startsWith('http');
+      const showsArrow = opensNewTab || social.url.startsWith('mailto:');
       return (
         <li key={social.label}>
           <a
             href={social.url}
-            {...(external ? { target: '_blank', rel: 'noreferrer' } : {})}
+            {...(opensNewTab ? { target: '_blank', rel: 'noreferrer' } : {})}
             className="group flex flex-col text-sm text-[var(--ink-soft)] underline decoration-[var(--rule)] underline-offset-4 transition-colors hover:text-[var(--signal)] hover:decoration-[var(--signal)]"
           >
             <span className="inline-flex items-baseline gap-1.5">
               {social.label}
-              {external && <span aria-hidden="true">↗</span>}
+              {showsArrow && <span aria-hidden="true">↗</span>}
             </span>
             <span className="font-mono-ui text-label tracking-[0.06em] text-[var(--ink-soft)] group-hover:text-[var(--signal)]">
               {social.handle}

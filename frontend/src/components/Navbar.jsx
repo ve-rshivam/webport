@@ -89,6 +89,7 @@ const Navbar = () => {
             className="hidden items-center gap-2 border border-[var(--ink)] px-3 py-2 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)] md:inline-flex"
           >
             Contact
+            <span aria-hidden="true">→</span>
           </Link>
 
           <button

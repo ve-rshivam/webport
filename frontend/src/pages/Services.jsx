@@ -83,6 +83,8 @@ const mergeServices = (serverServices) => {
   return Array.from(byTitle.values());
 };
 
+const primaryButtonClass = `${buttonClass} bg-[var(--ink)] text-[var(--paper)] hover:bg-[var(--signal)] hover:text-white hover:border-[var(--signal)]`;
+
 const servicePriceLabel = (price) => {
   const amount = Number(String(price ?? '').replace(/[^0-9.]/g, ''));
   if (Number.isFinite(amount) && amount > 0) {
@@ -132,30 +134,34 @@ const Services = () => {
                 <button
                   type="button"
                   onClick={() => navigate('/payment', { state: { preSelectedService: service.title } })}
-                  className="group -mx-2 grid w-full grid-cols-12 gap-x-4 gap-y-3 border-b border-[var(--rule)] px-2 py-7 text-left transition-colors hover:bg-[var(--signal-soft)] md:-mx-3 md:px-3 md:py-8"
+                  className="group -mx-2 grid w-full grid-cols-12 items-start gap-x-4 gap-y-2 border-b border-[var(--rule)] px-2 py-7 text-left transition-colors hover:bg-[var(--signal-soft)] md:-mx-3 md:px-3 md:py-8"
                 >
-                  <span className="col-span-2 font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)] md:col-span-1">
+                  <span className="col-span-2 pt-1 font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)] md:col-span-1">
                     {String(index + 1).padStart(2, '0')}
                   </span>
 
-                  <div className="col-span-10 md:col-span-4">
+                  <div className="col-span-10">
                     <h2 className="font-display text-2xl leading-none text-[var(--ink)] transition-colors group-hover:text-[var(--signal)] md:text-3xl">
                       {service.title}
                     </h2>
-                  </div>
-
-                  <p className="col-span-10 col-start-3 max-w-xl text-sm leading-relaxed text-[var(--ink-soft)] md:col-span-5 md:col-start-auto">
-                    {service.description}
-                  </p>
-
-                  <div className="col-span-10 col-start-3 flex items-center justify-between gap-4 md:col-span-2 md:col-start-auto md:justify-end">
-                    <span className="font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
-                      {servicePriceLabel(service.price)}
-                    </span>
-                    <span className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors group-hover:text-[var(--signal)]">
-                      Select
+                    <p className="mt-2 max-w-xl text-sm leading-relaxed text-[var(--ink-soft)]">
+                      {service.description}
+                    </p>
+                    <span className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono-ui text-[11px] tracking-[0.02em] text-[var(--ink-soft)]">
+                      <span>{servicePriceLabel(service.price)}</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="uppercase tracking-[0.16em] text-[var(--ink)] transition-colors group-hover:text-[var(--signal)]">
+                        Select
+                      </span>
                     </span>
                   </div>
+
+                  <span
+                    aria-hidden="true"
+                    className="col-span-1 hidden justify-self-end pt-1 text-lg text-[var(--ink-soft)] transition-colors group-hover:text-[var(--signal)] md:block"
+                  >
+                    →
+                  </span>
                 </button>
               </li>
             ))}
@@ -189,12 +195,12 @@ const Services = () => {
 
             <div className="mt-10 flex flex-wrap items-end justify-between gap-6 border-t border-[var(--rule)] pt-6">
               <div>
-                <p className="eyebrow text-[var(--ink-soft)]">Accepted methods</p>
+                <p className="eyebrow text-[var(--ink-soft)]">Payments</p>
                 <p className="mt-2 text-sm text-[var(--ink-soft)]">
                   PayPal · Bank transfer / UPI · Crypto (USDT)
                 </p>
               </div>
-              <button type="button" onClick={() => navigate('/contact')} className={buttonClass}>
+              <button type="button" onClick={() => navigate('/contact')} className={primaryButtonClass}>
                 Discuss a project
               </button>
             </div>
@@ -202,9 +208,12 @@ const Services = () => {
         </div>
       </section>
 
-      <div className="flex flex-wrap items-center gap-x-8 gap-y-4 border-t border-[var(--rule)] py-10">
-        <ArrowLink to="/payment">Make a payment</ArrowLink>
-        <ArrowLink to="/projects">See the work</ArrowLink>
+      <div className="grid grid-cols-12 gap-x-8 gap-y-4 border-t border-[var(--rule)] py-10">
+        <p className="eyebrow col-span-12 text-[var(--ink-soft)] md:col-span-4">Next</p>
+        <div className="col-span-12 flex flex-wrap items-center gap-x-8 gap-y-4 md:col-span-8">
+          <ArrowLink to="/payment">Make a payment</ArrowLink>
+          <ArrowLink to="/projects">See the work</ArrowLink>
+        </div>
       </div>
     </PageShell>
   );

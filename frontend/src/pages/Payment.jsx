@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation, useNavigate } from 'react-router-dom';
 import RefundRules from './RefundRules';
 import { PageShell, buttonClass } from '../components/Editorial';
+
+const primaryButtonClass = `${buttonClass} bg-[var(--ink)] text-[var(--paper)] hover:bg-[var(--signal)] hover:text-white hover:border-[var(--signal)]`;
 import { apiRequest, apiUrl } from '../lib/api';
 import { SUPPORT_EMAIL } from '../lib/contact';
 import { PayPalScriptProvider, PayPalButtons } from '@paypal/react-paypal-js';
@@ -418,7 +420,7 @@ const Payment = () => {
             exit={{ opacity: 0, y: -12 }}
             className="border-b border-[var(--rule)] py-10 md:py-14"
           >
-            <p className="eyebrow text-[var(--ink-soft)]">01 — Project requirements</p>
+            <p className="eyebrow text-[var(--ink-soft)]">01 — Details</p>
 
             <form
               onSubmit={handleProceedToPay}
@@ -513,7 +515,7 @@ const Payment = () => {
               </label>
 
               <div className="col-span-12 mt-2">
-                <button type="submit" className={buttonClass}>
+                <button type="submit" className={primaryButtonClass}>
                   Continue to payment 
                 </button>
               </div>
@@ -559,7 +561,7 @@ const Payment = () => {
                       state: { email: clientDetails.email, paymentSubmitted: true },
                     })
                   }
-                  className={`${buttonClass} mt-4`}
+                  className={`${primaryButtonClass} mt-4`}
                 >
                   Go to portal sign-in
                 </button>
@@ -675,7 +677,7 @@ const Payment = () => {
                       type="button"
                       onClick={handleRazorpayPayment}
                       disabled={verificationPending}
-                      className={`${buttonClass} mt-4 w-full disabled:cursor-not-allowed disabled:opacity-60`}
+                      className={`${primaryButtonClass} mt-4 w-full disabled:cursor-not-allowed disabled:opacity-60`}
                     >
                       {verificationPending ? 'Verifying payment…' : 'Pay with Razorpay'}
                     </button>
@@ -836,7 +838,7 @@ const Payment = () => {
                     <button
                       type="submit"
                       disabled={isVerifySubmitting}
-                      className={`${buttonClass} w-full disabled:cursor-not-allowed disabled:opacity-60`}
+                      className={`${primaryButtonClass} w-full disabled:cursor-not-allowed disabled:opacity-60`}
                     >
                       {isVerifySubmitting ? 'Submitting…' : 'Submit details'}
                     </button>
