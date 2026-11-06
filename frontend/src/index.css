@@ -158,7 +158,7 @@ main [style*="radial-gradient"] {
 }
 
 main h1,
-main h2 {
+main h2:not(.eyebrow) {
   font-family: "Instrument Serif", "Iowan Old Style", Georgia, serif !important;
   font-weight: 400 !important;
 }

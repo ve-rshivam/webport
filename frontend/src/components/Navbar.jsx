@@ -14,6 +14,7 @@ const Navbar = () => {
   const { theme, toggleTheme } = useContext(ThemeContext);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const location = useLocation();
+  const isHome = location.pathname === '/';
 
   useEffect(() => {
     if (!isMenuOpen) return undefined;
@@ -29,9 +30,18 @@ const Navbar = () => {
   return (
     <header className="fixed inset-x-0 top-0 z-50 border-b border-[var(--rule)] bg-[var(--paper)]">
       <div className="mx-auto flex h-16 max-w-[1440px] items-center justify-between gap-3 px-6 md:gap-6 md:px-10">
-        <Link to="/" aria-label="Shivam Kumar — home" className="flex shrink-0 items-center gap-2.5">
+        <Link
+          to="/"
+          aria-label="Shivam Kumar — home"
+          aria-current={isHome ? 'page' : undefined}
+          className="flex shrink-0 items-center gap-2.5"
+        >
           <span className="h-2 w-2 bg-[var(--signal)]" aria-hidden="true" />
-          <span className="font-display text-[1.375rem] leading-none text-[var(--ink)]">
+          <span
+            className={`font-display text-[1.375rem] leading-none text-[var(--ink)] ${
+              isHome ? 'border-b border-[var(--signal)] pb-0.5' : ''
+            }`}
+          >
             Rshivam
           </span>
         </Link>

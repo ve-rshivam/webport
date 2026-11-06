@@ -177,7 +177,9 @@ const Home = () => {
           const skillNames = data.skills
             .map((skill) => (typeof skill === 'string' ? skill : skill?.name))
             .filter(Boolean);
-          if (skillNames.length > 0) setPreviewSkills(skillNames.slice(0, 8));
+          // A thin API response (e.g. one entry) collapsed the column; keep the
+          // curated stack unless the API returns enough to fill it.
+          if (skillNames.length >= 3) setPreviewSkills(skillNames.slice(0, 8));
         }
       })
       .catch((err) => console.log('Error fetching skills:', err));
@@ -199,7 +201,9 @@ const Home = () => {
       <section className="border-b border-[var(--rule)] pb-12 pt-8 md:pb-16 md:pt-12">
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)]">
           <span className="normal-case tracking-[0.12em]">Portfolio — 2026</span>
-          <span className="hidden md:inline">Full-stack / Interface / AI</span>
+          <span className="hidden normal-case tracking-[0.12em] md:inline">
+            Full-stack / Interface / AI
+          </span>
           <span className="inline-flex items-center gap-2">
             <span className="h-1.5 w-1.5 bg-[var(--signal)]" aria-hidden="true" />
             Open to select work
@@ -208,7 +212,7 @@ const Home = () => {
 
         <div className="mt-10 grid grid-cols-12 items-start gap-x-8 gap-y-12 md:mt-14">
           <motion.div className="col-span-12 lg:col-span-8" {...reveal()}>
-            <p role="heading" aria-level={2} className="eyebrow normal-case tracking-[0.14em] text-[var(--signal)]">01 — Introduction</p>
+            <p className="eyebrow normal-case tracking-[0.14em] text-[var(--signal)]">01 — Introduction</p>
 
             <h1 className="mt-5 font-display text-hero leading-[0.82] tracking-[-0.02em] text-[var(--ink)]">
               {'Shivam'}
@@ -308,7 +312,7 @@ const Home = () => {
       { }
       <section className="border-b border-[var(--rule)] py-16 md:py-24">
         <div className="flex flex-wrap items-baseline justify-between gap-4">
-          <p role="heading" aria-level={2} className="eyebrow normal-case tracking-[0.14em] text-[var(--signal)]">02 — Selected work</p>
+          <h2 className="eyebrow normal-case tracking-[0.14em] text-[var(--signal)]">02 — Selected work</h2>
           <span className="font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)]">
             {projectStatus === 'ready'
               ? `${String(projects.length).padStart(2, '0')} projects`
@@ -372,7 +376,7 @@ const Home = () => {
                       </p>
                     )}
                     {href && (
-                      <span className="mt-3 inline-flex items-center gap-1.5 border-b border-[var(--rule)] pb-0.5 font-mono-ui text-label uppercase tracking-[0.14em] text-[var(--ink)] transition-colors group-hover:border-[var(--signal)] group-hover:text-[var(--signal)]">
+                      <span className="mt-2 inline-flex items-center gap-1.5 border-b border-[var(--rule)] pb-0.5 font-mono-ui text-label uppercase tracking-[0.14em] text-[var(--ink)] transition-colors group-hover:border-[var(--signal)] group-hover:text-[var(--signal)]">
                         Visit
                         <span aria-hidden="true">↗</span>
                       </span>
@@ -412,7 +416,7 @@ const Home = () => {
       <section className="border-b border-[var(--rule)] py-16 md:py-24">
         <div className="grid grid-cols-12 gap-x-8 gap-y-10">
           <div className="col-span-12 md:col-span-4">
-            <p role="heading" aria-level={2} className="eyebrow normal-case tracking-[0.14em] text-[var(--signal)]">03 — About</p>
+            <h2 className="eyebrow normal-case tracking-[0.14em] text-[var(--signal)]">03 — About</h2>
             <p className="mt-4 max-w-xs font-mono-ui text-label leading-relaxed tracking-[0.08em] text-[var(--ink-soft)]">
               A short note on how I work and what I care about.
             </p>
@@ -458,7 +462,7 @@ const Home = () => {
       <section className="py-16 md:py-24">
         <div className="grid grid-cols-12 gap-x-8 gap-y-8">
           <div className="col-span-12 md:col-span-4">
-            <p role="heading" aria-level={2} className="eyebrow normal-case tracking-[0.14em] text-[var(--signal)]">04 — Contact</p>
+            <h2 className="eyebrow normal-case tracking-[0.14em] text-[var(--signal)]">04 — Contact</h2>
           </div>
 
           <motion.div className="col-span-12 md:col-span-8" {...reveal()}>
@@ -491,13 +495,13 @@ const Home = () => {
                 to="/services"
                 className="font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors hover:text-[var(--signal)]"
               >
-                Services
+                Services <span aria-hidden="true">↗</span>
               </Link>
               <Link
                 to="/payment"
                 className="font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors hover:text-[var(--signal)]"
               >
-                Payment
+                Payment <span aria-hidden="true">↗</span>
               </Link>
             </div>
           </motion.div>

@@ -78,21 +78,24 @@ const Footer = () => {
           <p className="mt-4 max-w-sm text-sm leading-relaxed text-[var(--ink-soft)]">
             Full-stack developer working across interfaces, APIs and applied AI.
           </p>
-          <p className="mt-4 text-sm text-[var(--ink-soft)]">
-            Support:{' '}
+          <div className="mt-4 text-sm text-[var(--ink-soft)]">
+            <p>Support</p>
             {SUPPORT_EMAIL ? (
               <a
                 href={emailHref(SUPPORT_EMAIL)}
-                className="text-[var(--ink)] underline decoration-[var(--rule)] underline-offset-4 transition-colors hover:text-[var(--signal)]"
+                className="mt-0.5 inline-block text-[var(--ink)] underline decoration-[var(--rule)] underline-offset-4 transition-colors hover:text-[var(--signal)]"
               >
                 {SUPPORT_EMAIL}
               </a>
             ) : (
-              <Link to="/contact" className="text-[var(--ink)] underline decoration-[var(--rule)] underline-offset-4">
+              <Link
+                to="/contact"
+                className="mt-0.5 inline-block text-[var(--ink)] underline decoration-[var(--rule)] underline-offset-4"
+              >
                 contact form
               </Link>
             )}
-          </p>
+          </div>
         </div>
 
         <nav
