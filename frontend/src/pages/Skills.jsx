@@ -4,6 +4,11 @@ import { ArrowLink, PageIntro, PageShell } from '../components/Editorial';
 
 const LOCAL_SKILLS = [
   {
+    name: 'C',
+    description: 'Systems-level fundamentals: memory, pointers and the compilation model under higher-level languages.',
+    proficiency: 70,
+  },
+  {
     name: 'C++',
     description: 'Core language for competitive programming. STL, pointers, OOP and memory management.',
     proficiency: 80,
@@ -108,7 +113,7 @@ const Skills = () => {
 
       <section className="py-12 md:py-16">
         {status === 'loading' && (
-          <p className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)]">
+          <p className="font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)]">
             Loading index…
           </p>
         )}
@@ -120,15 +125,15 @@ const Skills = () => {
                 key={`${skill.name}-${index}`}
                 className="grid grid-cols-12 gap-x-6 gap-y-3 border-b border-[var(--rule)] py-6 md:py-7"
               >
-                <span className="col-span-2 font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)] md:col-span-1">
+                <span className="col-span-2 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)] md:col-span-1">
                   {String(index + 1).padStart(2, '0')}
                 </span>
 
                 <div className="col-span-10 md:col-span-4">
-                  <h2 className="font-display text-2xl leading-none text-[var(--ink)] md:text-3xl">
+                  <h2 className="font-display text-heading leading-none text-[var(--ink)]">
                     {skill.name}
                   </h2>
-                  <p className="mt-1 font-mono-ui text-[9px] uppercase tracking-[0.16em] text-[var(--signal)]">
+                  <p className="mt-1 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--signal)]">
                     {skill.category || 'Core'}
                   </p>
                 </div>
@@ -138,7 +143,7 @@ const Skills = () => {
                 </p>
 
                 <div className="col-span-10 col-start-3 flex items-center gap-4 md:col-span-2 md:col-start-auto md:justify-end">
-                  <span className="font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
+                  <span className="font-mono-ui text-label uppercase tracking-[0.14em] text-[var(--ink-soft)]">
                     {skill.proficiency}%
                   </span>
                   <span className="h-px flex-1 bg-[var(--rule)] md:w-16 md:flex-none">

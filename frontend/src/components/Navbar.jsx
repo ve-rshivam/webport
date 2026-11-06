@@ -52,6 +52,9 @@ const Navbar = () => {
                 <span className="text-[var(--rule)] transition-colors group-hover:text-[var(--signal)]">
                   {item.index}
                 </span>
+                <span aria-hidden="true" className="text-[var(--rule)]">
+                  —
+                </span>
                 <span className={isActive ? 'border-b border-[var(--signal)] pb-0.5' : ''}>
                   {item.label}
                 </span>

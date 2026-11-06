@@ -99,10 +99,10 @@ const Footer = () => {
           aria-label="Site map"
           className="col-span-12 lg:col-span-8"
         >
-          <p role="heading" aria-level={2} className="eyebrow border-b border-[var(--rule)] pb-3 text-[var(--ink-soft)]">
+          <p role="heading" aria-level={2} className="eyebrow border-b border-[var(--rule)] pb-2 text-[var(--ink-soft)]">
             Site map
           </p>
-          <div className="mt-6 grid grid-cols-2 gap-x-8 gap-y-8 sm:grid-cols-4">
+          <div className="mt-4 grid grid-cols-2 gap-x-8 gap-y-8 sm:grid-cols-4">
             {SITE_MAP.map((group) => (
               <div key={group.title}>
                 <p className="font-mono-ui text-label uppercase tracking-[0.14em] text-[var(--ink)]">
