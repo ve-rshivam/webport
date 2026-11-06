@@ -40,6 +40,25 @@ function ClientPortal() {
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [loginData, setLoginData] = useState({ email: pendingCheckout.email || '', password: '' });
   const [mustChangePassword, setMustChangePassword] = useState(false);
+
+  const anyModalOpen = showWelcomePopup || showSettings || showPasswordModal;
+
+  useEffect(() => {
+    if (!anyModalOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event) => {
+      if (event.key !== 'Escape') return;
+      if (showPasswordModal) setShowPasswordModal(false);
+      else if (showSettings) setShowSettings(false);
+      else setShowWelcomePopup(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [anyModalOpen, showPasswordModal, showSettings]);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordLoading, setPasswordLoading] = useState(false);
@@ -430,6 +449,12 @@ function ClientPortal() {
 
   const labelClass = 'block mt-1.5 text-sm font-medium text-[var(--ink)]';
 
+  const textButtonClass =
+    'text-sm text-[var(--signal)] underline underline-offset-2 transition-colors hover:opacity-80';
+
+  const iconButtonClass =
+    'absolute right-4 top-4 font-mono-ui text-lg text-[var(--ink-soft)] transition-colors hover:text-[var(--signal)]';
+
   return (
     <PageWrapper>
       <div className="mx-auto min-h-screen w-full max-w-[1440px] px-6 pb-16 md:px-10">
@@ -526,7 +551,7 @@ function ClientPortal() {
                   <button
                     type="button"
                     onClick={() => setShowForgot(true)}
-                    className="justify-center text-sm text-[var(--signal)] underline underline-offset-2 hover:opacity-80"
+                    className={`${textButtonClass} justify-center`}
                   >
                     Forgot your password?
                   </button>
@@ -553,7 +578,7 @@ function ClientPortal() {
                               setForgotMsg('');
                               setForgotError('');
                             }}
-                            className="shrink-0 text-sm text-[var(--signal)] underline underline-offset-2 transition-colors hover:opacity-80"
+                            className={`${textButtonClass} shrink-0`}
                           >
                             Cancel
                           </button>
@@ -837,7 +862,7 @@ function ClientPortal() {
                   )}
                   {projectData.invoiceNumber && (
                     <div className="mt-4">
-                      <button type="button" onClick={handleDownloadInvoice} disabled={invoiceDownloading} className={`${buttonClass} disabled:cursor-wait disabled:opacity-50`}>
+                      <button type="button" onClick={handleDownloadInvoice} disabled={invoiceDownloading} className={`${secondaryButtonClass} disabled:cursor-wait disabled:opacity-50`}>
                         {invoiceDownloading ? 'Preparing invoice PDF…' : 'Download Invoice & SOW (PDF) ↓'}
                       </button>
                       <p className="mt-2 text-xs text-[var(--ink-soft)]">Invoice {projectData.invoiceNumber}</p>
@@ -907,23 +932,25 @@ function ClientPortal() {
               <div className="mb-10 grid grid-cols-1 gap-6 md:grid-cols-12 md:gap-x-8">
                 <div className="col-span-12 md:col-span-7">
                   <p className="eyebrow text-[var(--ink-soft)]">Live progress</p>
-                  <div className="mt-4 rounded-xl border border-[var(--rule)] bg-[var(--paper)] p-6">
-                    <div
-                      className="h-2.5 w-full overflow-hidden rounded-full bg-[var(--paper-2)]"
-                      role="progressbar"
-                      aria-label="Project progress"
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={Number(projectData.progress) || 0}
-                    >
+                  <div className="mt-4 rounded-xl border border-[var(--rule)] bg-[var(--paper)] p-5">
+                    <div className="flex items-center gap-4">
                       <div
-                        className="h-full rounded-full bg-[var(--signal)] transition-all duration-500 ease-out"
-                        style={{ width: `${projectData.progress || 0}%` }}
-                      />
+                        className="h-3 w-full max-w-md overflow-hidden rounded-full bg-[var(--paper-2)]"
+                        role="progressbar"
+                        aria-label="Project progress"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={Number(projectData.progress) || 0}
+                      >
+                        <div
+                          className="h-full rounded-full bg-[var(--signal)] transition-all duration-500 ease-out"
+                          style={{ width: `${projectData.progress || 0}%` }}
+                        />
+                      </div>
+                      <p className="shrink-0 font-mono-ui text-sm tabular-nums text-[var(--ink)]">
+                        {projectData.progress || 0}%
+                      </p>
                     </div>
-                    <p className="mt-3 text-sm text-[var(--ink-soft)]">
-                      Current progress: {projectData.progress || 0}%
-                    </p>
                     {projectData.notes && (
                       <div className="mt-4 border-t border-[var(--rule)] pt-4">
                         <p className="eyebrow text-[var(--ink-soft)]">Latest note</p>
@@ -1090,13 +1117,16 @@ function ClientPortal() {
         )}
 
         <AnimatePresence>
-          {showWelcomePopup && isLoggedIn && (
+          {showWelcomePopup && !showSettings && !showPasswordModal && isLoggedIn && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(10,8,6,0.7)] px-4"
               onClick={() => setShowWelcomePopup(false)}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="welcome-back-title"
             >
               <motion.div
                 initial={{ y: 12, opacity: 0 }}
@@ -1109,12 +1139,15 @@ function ClientPortal() {
                   type="button"
                   onClick={() => setShowWelcomePopup(false)}
                   aria-label="Close"
-                  className="absolute right-4 top-4 font-mono-ui text-lg text-[var(--ink-soft)] transition-colors hover:text-[var(--signal)]"
+                  className={iconButtonClass}
                 >
                   ×
                 </button>
                 <p className="eyebrow text-[var(--signal)]">Session opened</p>
-                <h2 className="mt-2 font-display text-2xl leading-tight text-[var(--ink)]">
+                <h2
+                  id="welcome-back-title"
+                  className="mt-2 font-display text-2xl leading-tight text-[var(--ink)]"
+                >
                   Welcome back, {session?.user?.name || 'there'}.
                 </h2>
                 <p className="mt-3 text-sm leading-6 text-[var(--ink-soft)]">
@@ -1127,6 +1160,7 @@ function ClientPortal() {
                 <div className="mt-6 flex flex-wrap gap-3">
                   <button
                     type="button"
+                    autoFocus
                     onClick={() => {
                       setShowWelcomePopup(false);
                       setShowSettings(false);
@@ -1171,7 +1205,7 @@ function ClientPortal() {
                   type="button"
                   onClick={() => setShowSettings(false)}
                   aria-label="Close"
-                  className="absolute right-4 top-4 font-mono-ui text-lg text-[var(--ink-soft)] transition-colors hover:text-[var(--signal)]"
+                  className={iconButtonClass}
                 >
                   ×
                 </button>
@@ -1258,7 +1292,7 @@ function ClientPortal() {
                   type="button"
                   onClick={() => setShowPasswordModal(false)}
                   aria-label="Close"
-                  className="absolute right-4 top-4 font-mono-ui text-lg text-[var(--ink-soft)] transition-colors hover:text-[var(--signal)]"
+                  className={iconButtonClass}
                 >
                   ×
                 </button>
