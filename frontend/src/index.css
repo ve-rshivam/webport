@@ -1,5 +1,17 @@
 @import "tailwindcss";
 
+@theme {
+  --text-label: 0.75rem;
+  --text-label--line-height: 1.4;
+  --text-small: 0.875rem;
+  --text-body: 1rem;
+  --text-lead: 1.125rem;
+  --text-title: 1.5rem;
+  --text-heading: clamp(1.875rem, 3vw, 2.25rem);
+  --text-display: clamp(2.8rem, 7vw, 6rem);
+  --text-hero: clamp(3.9rem, 11vw, 9.5rem);
+}
+
 
 .role-stack {
   display: inline-grid;
@@ -124,7 +136,7 @@ html.dark {
 
   .eyebrow {
     font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.6875rem;
+    font-size: var(--text-label);
     line-height: 1.4;
     letter-spacing: 0.18em;
     text-transform: uppercase;

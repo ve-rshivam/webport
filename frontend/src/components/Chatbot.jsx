@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiUrl } from '../lib/api';
 
@@ -14,6 +14,29 @@ const Chatbot = () => {
   const [messages, setMessages] = useState(INITIAL_MESSAGES);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const inputRef = useRef(null);
+
+  // Opened from the header / mobile menu trigger instead of a floating button.
+  useEffect(() => {
+    const openChat = () => setIsOpen(true);
+    window.addEventListener('chat_open', openChat);
+    return () => window.removeEventListener('chat_open', openChat);
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) inputRef.current?.focus();
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setIsOpen(false);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen]);
 
   const sendMessage = async (event) => {
     event.preventDefault();
@@ -51,19 +74,21 @@ const Chatbot = () => {
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end">
+    <div className="fixed bottom-6 right-[max(1.5rem,calc((100vw_-_1440px)_/_2_+_2.5rem))] z-40 flex flex-col items-end">
       <AnimatePresence>
         {isOpen && (
           <motion.div
             id="chat-panel"
+            role="dialog"
+            aria-labelledby="chat-title"
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
             transition={{ duration: 0.2, ease: 'easeOut' }}
-            className="mb-3 flex h-[440px] w-[min(340px,calc(100vw-2rem))] flex-col border border-[var(--ink)] bg-[var(--paper)]"
+            className="flex h-[440px] w-[min(340px,calc(100vw-2rem))] flex-col border border-[var(--ink)] bg-[var(--paper)] shadow-[0_18px_40px_rgba(0,0,0,0.12)]"
           >
             <div className="flex items-center justify-between border-b border-[var(--rule)] px-4 py-3">
-              <p className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink)]">
+              <p id="chat-title" className="font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink)]">
                 Ask about my work
               </p>
               <button
@@ -95,7 +120,7 @@ const Chatbot = () => {
               ))}
 
               {isTyping && (
-                <p className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)]">
+                <p className="font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)]">
                   Typing…
                 </p>
               )}
@@ -106,6 +131,7 @@ const Chatbot = () => {
                 Your question
               </label>
               <input
+                ref={inputRef}
                 id="chat-input"
                 type="text"
                 value={input}
@@ -115,7 +141,7 @@ const Chatbot = () => {
               />
               <button
                 type="submit"
-                className="border-l border-[var(--rule)] px-4 font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)]"
+                className="border-l border-[var(--rule)] px-4 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)]"
               >
                 Send
               </button>
@@ -124,15 +150,6 @@ const Chatbot = () => {
         )}
       </AnimatePresence>
 
-      <button
-        type="button"
-        onClick={() => setIsOpen((open) => !open)}
-        aria-expanded={isOpen}
-        aria-controls="chat-panel"
-        className="flex items-center gap-2 border border-[var(--ink)] bg-[var(--paper)] px-4 py-2.5 font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)]"
-      >
-        {isOpen ? 'Close' : 'Ask'}
-      </button>
     </div>
   );
 };

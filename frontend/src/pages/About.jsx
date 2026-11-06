@@ -38,7 +38,7 @@ const About = () => {
               alt="Portrait of Shivam Kumar"
               className="aspect-[4/5] w-full object-cover grayscale"
             />
-            <figcaption className="mt-2 flex items-baseline justify-between font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
+            <figcaption className="mt-2 flex items-baseline justify-between font-mono-ui text-label tracking-[0.14em] text-[var(--ink-soft)]">
               <span>Fig. 02 — Portrait</span>
               <span>2026</span>
             </figcaption>
@@ -46,19 +46,19 @@ const About = () => {
 
           <dl className="mt-8 border-t border-[var(--rule)] pt-5 text-sm">
             <div className="flex justify-between gap-6 border-b border-[var(--rule)] py-2.5">
-              <dt className="font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
+              <dt className="font-mono-ui text-label uppercase tracking-[0.14em] text-[var(--ink-soft)]">
                 Studying
               </dt>
               <dd className="text-right text-[var(--ink)]">B.Tech CSE</dd>
             </div>
             <div className="flex justify-between gap-6 border-b border-[var(--rule)] py-2.5">
-              <dt className="font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
+              <dt className="font-mono-ui text-label uppercase tracking-[0.14em] text-[var(--ink-soft)]">
                 Focus
               </dt>
               <dd className="text-right text-[var(--ink)]">AI / ML, full-stack</dd>
             </div>
             <div className="flex justify-between gap-6 py-2.5">
-              <dt className="font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
+              <dt className="font-mono-ui text-label uppercase tracking-[0.14em] text-[var(--ink-soft)]">
                 Based
               </dt>
               <dd className="text-right text-[var(--ink)]">Haridwar, India</dd>
@@ -70,7 +70,7 @@ const About = () => {
           <div className="max-w-2xl space-y-9">
             {SECTIONS.map((section) => (
               <section key={section.title} className="border-t border-[var(--rule)] pt-6">
-                <h2 className="font-display text-3xl leading-tight text-[var(--ink)] md:text-4xl">
+                <h2 className="font-display text-heading leading-tight text-[var(--ink)]">
                   {section.title}
                 </h2>
                 <p className="mt-3 text-base leading-relaxed text-[var(--ink-soft)]">
@@ -87,12 +87,12 @@ const About = () => {
       </div>
 
       <div className="flex flex-col gap-6 py-12 md:flex-row md:items-end md:justify-between md:py-16">
-        <p className="max-w-xl font-display text-3xl leading-tight text-[var(--ink)] md:text-4xl">
+        <p className="max-w-xl font-display text-heading leading-tight text-[var(--ink)]">
           Want the longer version, or the version with code?
         </p>
         <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
           <ArrowLink to="/resume">Read the resume</ArrowLink>
-          <ArrowLink to="/contact">Start a conversation</ArrowLink>
+          <ArrowLink to="/contact" solid>Start a conversation</ArrowLink>
         </div>
       </div>
     </PageShell>

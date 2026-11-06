@@ -29,12 +29,12 @@ const Education = () => {
   return (
     <section>
       <p className="eyebrow text-[var(--signal)]">Education</p>
-      <h2 className="mt-4 font-display text-4xl leading-none text-[var(--ink)] md:text-5xl">
+      <h2 className="mt-2 font-display text-heading leading-none text-[var(--ink)]">
         Where I study.
       </h2>
 
       {status === 'loading' && (
-        <p className="mt-8 font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)]">
+        <p className="mt-8 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)]">
           Loading record…
         </p>
       )}
@@ -57,12 +57,12 @@ const Education = () => {
                 key={edu._id || index}
                 className="grid grid-cols-12 gap-x-6 gap-y-2 border-b border-[var(--rule)] py-6"
               >
-                <span className="col-span-12 font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)] sm:col-span-3">
+                <span className="col-span-12 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)] sm:col-span-3">
                   {edu.year || edu.duration || '—'}
                 </span>
 
                 <div className="col-span-12 sm:col-span-9">
-                  <h3 className="font-display text-2xl leading-tight text-[var(--ink)]">
+                  <h3 className="font-display text-title leading-tight text-[var(--ink)]">
                     {edu.degree || edu.title || 'Bachelor of Technology'}
                   </h3>
                   <p className="mt-1 text-sm text-[var(--signal)]">

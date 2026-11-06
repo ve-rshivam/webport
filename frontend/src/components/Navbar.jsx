@@ -31,7 +31,7 @@ const Navbar = () => {
       <div className="mx-auto flex h-16 max-w-[1440px] items-center justify-between gap-3 px-6 md:gap-6 md:px-10">
         <Link to="/" aria-label="Shivam Kumar — home" className="flex shrink-0 items-center gap-2.5">
           <span className="h-2 w-2 bg-[var(--signal)]" aria-hidden="true" />
-          <span className="font-display text-[1.35rem] leading-none text-[var(--ink)] sm:text-[1.55rem]">
+          <span className="font-display text-[1.375rem] leading-none text-[var(--ink)]">
             Rshivam
           </span>
         </Link>
@@ -45,7 +45,7 @@ const Navbar = () => {
                 key={item.path}
                 to={item.path}
                 aria-current={isActive ? 'page' : undefined}
-                className={`group inline-flex items-baseline gap-1.5 font-mono-ui text-[10px] uppercase tracking-[0.16em] transition-colors ${
+                className={`group inline-flex items-baseline gap-1.5 font-mono-ui text-label uppercase tracking-[0.16em] transition-colors ${
                   isActive ? 'text-[var(--signal)]' : 'text-[var(--ink-soft)] hover:text-[var(--ink)]'
                 }`}
               >
@@ -61,20 +61,31 @@ const Navbar = () => {
         </nav>
 
         <div className="flex items-center gap-3 md:gap-4">
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new Event('chat_open'))}
+            aria-haspopup="dialog"
+            className="hidden items-center gap-2 border border-[var(--rule)] px-3 py-2 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors hover:border-[var(--ink)] hover:text-[var(--ink)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--signal)] sm:inline-flex"
+          >
+            Ask
+            <span aria-hidden="true">↗</span>
+          </button>
+
           <Link
             to="/contact"
-            className="hidden items-center gap-2 border border-[var(--ink)] px-3 py-2 font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)] md:inline-flex"
+            className="hidden items-center gap-2 border border-[var(--ink)] px-3 py-2 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)] md:inline-flex"
           >
-            Contact <span aria-hidden="true"></span>
+            Contact <span aria-hidden="true">↗</span>
           </Link>
 
           <button
             type="button"
             onClick={toggleTheme}
             aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-            className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors hover:text-[var(--signal)]"
+            className="inline-flex items-center gap-2 border border-[var(--rule)] px-3 py-2 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors hover:border-[var(--ink)] hover:text-[var(--ink)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--signal)]"
           >
-            [{theme === 'dark' ? 'Light' : 'Dark'}]
+            <span aria-hidden="true">{theme === 'dark' ? '☾' : '☀'}</span>
+            <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
           </button>
 
           <button
@@ -82,7 +93,7 @@ const Navbar = () => {
             onClick={() => setIsMenuOpen((open) => !open)}
             aria-expanded={isMenuOpen}
             aria-controls="mobile-menu"
-            className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink)] md:hidden"
+            className="font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink)] md:hidden"
           >
             {isMenuOpen ? 'Close' : 'Menu'}
           </button>
@@ -108,25 +119,35 @@ const Navbar = () => {
                   aria-current={location.pathname === item.path ? 'page' : undefined}
                   className="flex items-baseline justify-between border-b border-[var(--rule)] py-4"
                 >
-                  <span className="font-display text-3xl text-[var(--ink)]">{item.label}</span>
-                  <span className="font-mono-ui text-[10px] tracking-[0.16em] text-[var(--ink-soft)]">
+                  <span className="font-display text-heading text-[var(--ink)]">{item.label}</span>
+                  <span className="font-mono-ui text-label tracking-[0.16em] text-[var(--ink-soft)]">
                     {item.index}
                   </span>
                 </Link>
               ))}
 
-              <div className="mt-5 flex items-center justify-between">
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
                 <Link
                   to="/contact"
                   onClick={() => setIsMenuOpen(false)}
-                  className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--signal)]"
+                  className="font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--signal)]"
                 >
-                  Contact 
+                  Contact <span aria-hidden="true">↗</span>
                 </Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsMenuOpen(false);
+                    window.dispatchEvent(new Event('chat_open'));
+                  }}
+                  className="font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)] sm:hidden"
+                >
+                  Ask
+                </button>
                 <Link
                   to="/portal"
                   onClick={() => setIsMenuOpen(false)}
-                  className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)]"
+                  className="font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)]"
                 >
                   Client portal
                 </Link>

@@ -13,12 +13,12 @@ export const PageIntro = ({ index, label, title, intro, children }) => (
       {children}
     </div>
 
-    <h1 className="mt-5 max-w-5xl font-display text-[clamp(2.8rem,7vw,6rem)] leading-[0.92] tracking-[-0.02em] text-[var(--ink)]">
+    <h1 className="mt-3 max-w-5xl font-display text-display leading-[0.92] tracking-[-0.02em] text-[var(--ink)]">
       {title}
     </h1>
 
     {intro && (
-      <p className="mt-5 max-w-2xl text-base leading-relaxed text-[var(--ink-soft)] md:text-lg">
+      <p className="mt-5 max-w-2xl text-lead leading-relaxed text-[var(--ink-soft)]">
         {intro}
       </p>
     )}
@@ -31,10 +31,14 @@ export const Panel = ({ children, className = '' }) => (
   </div>
 );
 
-export const ArrowLink = ({ to, href, children, className = '' }) => {
-  const classes = `group inline-flex items-center gap-3 border-b border-[var(--ink)] pb-1 text-sm font-medium text-[var(--ink)] transition-colors hover:border-[var(--signal)] hover:text-[var(--signal)] ${className}`;
+export const ArrowLink = ({ to, href, children, className = '', solid = false, outline = false }) => {
+  const base = 'group inline-flex items-center gap-3 text-sm font-medium transition-colors';
+  const filled = `${base} bg-[var(--ink)] px-5 py-3 text-[var(--paper)] hover:bg-[var(--signal)]`;
+  const boxed = `${base} border border-[var(--ink)] px-5 py-3 text-[var(--ink)] hover:border-[var(--signal)] hover:text-[var(--signal)]`;
+  const underlined = `${base} border-b border-[var(--ink)] pb-1 text-[var(--ink)] hover:border-[var(--signal)] hover:text-[var(--signal)]`;
+  const classes = `${solid ? filled : outline ? boxed : underlined} focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--signal)] ${className}`;
   const arrow = (
-    <span aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">
+    <span aria-hidden="true" className="transition-transform group-hover:translate-x-0.5">↗
       
     </span>
   );
@@ -62,4 +66,4 @@ export const inputClass =
 export const labelClass = 'eyebrow mb-2 block text-[var(--ink-soft)]';
 
 export const buttonClass =
-  'inline-flex items-center justify-center gap-2 border border-[var(--ink)] px-5 py-3 font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)] disabled:cursor-not-allowed disabled:opacity-50';
+  'inline-flex items-center justify-center gap-2 border border-[var(--ink)] px-5 py-3 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)] disabled:cursor-not-allowed disabled:opacity-50';

@@ -42,17 +42,13 @@ const Projects = () => {
       <PageIntro
         index="01"
         label="Work"
-        title="The archive."
+        title="The work archive."
         intro="Public repositories, synced from GitHub. The short, pinned selection lives on the home page."
-      >
-        <span className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)]">
-          {status === 'ready' ? `${String(repos.length).padStart(2, '0')} repositories` : 'Synced index'}
-        </span>
-      </PageIntro>
+      />
 
       <section className="py-12 md:py-16">
         {status === 'loading' && (
-          <p className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)]">
+          <p className="font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)]">
             Reading GitHub…
           </p>
         )}
@@ -65,7 +61,7 @@ const Projects = () => {
             <button
               type="button"
               onClick={retry}
-              className="border-b border-[var(--ink)] pb-0.5 font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink)] transition-colors hover:border-[var(--signal)] hover:text-[var(--signal)]"
+              className="border-b border-[var(--ink)] pb-0.5 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink)] transition-colors hover:border-[var(--signal)] hover:text-[var(--signal)]"
             >
               Try again
             </button>
@@ -77,52 +73,65 @@ const Projects = () => {
         )}
 
         {status === 'ready' && repos.length > 0 && (
-          <ul className="border-t border-[var(--rule)]">
-            {repos.map((repo, index) => (
-              <li key={repo.id}>
-                <a
-                  href={repo.html_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="group -mx-2 grid grid-cols-12 gap-x-4 gap-y-3 border-b border-[var(--rule)] px-2 py-7 transition-colors hover:bg-[var(--signal-soft)] md:-mx-3 md:px-3"
-                >
-                  <span className="col-span-2 font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)] md:col-span-1">
-                    {String(index + 1).padStart(2, '0')}
-                  </span>
+          <>
+            <div className="flex flex-wrap items-baseline justify-between gap-3 pb-4">
+              <p className="eyebrow text-[var(--ink-soft)]">All repositories</p>
+              <span className="font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)]">
+                {String(repos.length).padStart(2, '0')} repositories
+              </span>
+            </div>
 
-                  <div className="col-span-10 md:col-span-5">
-                    <h2 className="font-display text-2xl capitalize leading-none text-[var(--ink)] transition-colors group-hover:text-[var(--signal)] md:text-3xl">
-                      {(repo.name || 'Untitled').replace(/-/g, ' ')}
-                    </h2>
-                    <p className="mt-2 max-w-lg text-sm leading-relaxed text-[var(--ink-soft)]">
-                      {repo.description || 'No description provided for this repository.'}
-                    </p>
-                  </div>
-
-                  <div className="col-span-8 col-start-3 md:col-span-3 md:col-start-auto">
-                    <p className="font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
-                      {repo.language || 'Language not listed'}
-                    </p>
-                    <p className="mt-1 font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink-soft)]">
-                      {repo.stargazers_count || 0} stars
-                    </p>
-                  </div>
-
-                  <div className="col-span-4 flex justify-end md:col-span-3">
-                    <span className="font-mono-ui text-[10px] uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors group-hover:text-[var(--signal)]">
-                      Source
+            <ul className="border-t border-[var(--rule)]">
+              {repos.map((repo, index) => (
+                <li key={repo.id}>
+                  <a
+                    href={repo.html_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group grid grid-cols-12 gap-x-4 gap-y-3 border-b border-[var(--rule)] py-7 transition-colors hover:bg-[var(--signal-soft)]"
+                  >
+                    <span className="col-span-2 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)] md:col-span-1">
+                      {String(index + 1).padStart(2, '0')}
                     </span>
-                  </div>
-                </a>
-              </li>
-            ))}
-          </ul>
+
+                    <div className="col-span-10 md:col-span-5">
+                      <h2 className="font-display text-heading capitalize leading-none text-[var(--ink)] transition-colors group-hover:text-[var(--signal)]">
+                        {(repo.name || 'Untitled').replace(/-/g, ' ')}
+                      </h2>
+                      {repo.description && (
+                        <p className="mt-2 max-w-lg text-sm leading-relaxed text-[var(--ink-soft)]">
+                          {repo.description}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="col-span-8 col-start-3 md:col-span-3 md:col-start-auto">
+                      {repo.language && (
+                        <p className="font-mono-ui text-label uppercase tracking-[0.14em] text-[var(--ink-soft)]">
+                          {repo.language}
+                        </p>
+                      )}
+                      <p className="mt-1 font-mono-ui text-label uppercase tracking-[0.14em] text-[var(--ink-soft)]">
+                        {repo.stargazers_count || 0} stars
+                      </p>
+                    </div>
+
+                    <div className="col-span-4 flex justify-end md:col-span-3">
+                      <span className="font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink-soft)] transition-colors group-hover:text-[var(--signal)]">
+                        Source
+                      </span>
+                    </div>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </section>
 
       <div className="flex flex-wrap items-center gap-x-8 gap-y-4 border-t border-[var(--rule)] py-10">
-        <ArrowLink href={`https://github.com/${GITHUB_USER}`}>GitHub profile</ArrowLink>
-        <ArrowLink to="/contact">Start a project</ArrowLink>
+        <ArrowLink href={`https://github.com/${GITHUB_USER}`} outline>GitHub profile</ArrowLink>
+        <ArrowLink to="/contact" solid>Start a project</ArrowLink>
       </div>
     </PageShell>
   );

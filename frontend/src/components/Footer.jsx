@@ -8,7 +8,7 @@ const SITE_MAP = [
       { label: 'Home', path: '/' },
       { label: 'About', path: '/about' },
       { label: 'Skills', path: '/skills' },
-      { label: 'Projects', path: '/projects' },
+      { label: 'Work', path: '/projects' },
       { label: 'Experience', path: '/experience' },
       { label: 'Services', path: '/services' },
       { label: 'Resume', path: '/resume' },
@@ -57,7 +57,7 @@ const Elsewhere = () => (
               {social.label}
               {external ? ' ' : ''}
             </span>
-            <span className="font-mono-ui text-[10px] tracking-[0.06em] text-[var(--ink-soft)] group-hover:text-[var(--signal)]">
+            <span className="font-mono-ui text-label tracking-[0.06em] text-[var(--ink-soft)] group-hover:text-[var(--signal)]">
               {social.handle}
             </span>
           </a>
@@ -99,14 +99,16 @@ const Footer = () => {
           aria-label="Site map"
           className="col-span-12 lg:col-span-8"
         >
-          <p className="eyebrow text-[var(--ink-soft)]">Site map</p>
-          <div className="mt-4 grid grid-cols-2 gap-x-8 gap-y-8 sm:grid-cols-4">
+          <p role="heading" aria-level={2} className="eyebrow border-b border-[var(--rule)] pb-3 text-[var(--ink-soft)]">
+            Site map
+          </p>
+          <div className="mt-6 grid grid-cols-2 gap-x-8 gap-y-8 sm:grid-cols-4">
             {SITE_MAP.map((group) => (
               <div key={group.title}>
-                <p className="font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink)]">
+                <p className="font-mono-ui text-label uppercase tracking-[0.14em] text-[var(--ink)]">
                   {group.title}
                 </p>
-                <ul className="mt-3 space-y-2.5">
+                <ul className={group.links.length > 4 ? 'mt-3 grid grid-cols-2 gap-x-6 gap-y-2.5' : 'mt-3 space-y-2.5'}>
                   {group.links.map((link) => (
                     <li key={`${group.title}-${link.path}`}>
                       <Link
@@ -117,23 +119,12 @@ const Footer = () => {
                       </Link>
                     </li>
                   ))}
-                  {group.title === 'Legal' && (
-                    <li>
-                      <button
-                        type="button"
-                        onClick={() => window.dispatchEvent(new Event('cookie_consent_open'))}
-                        className="text-left text-sm text-[var(--ink-soft)] transition-colors hover:text-[var(--signal)] cursor-pointer"
-                      >
-                        Cookie preferences
-                      </button>
-                    </li>
-                  )}
                 </ul>
               </div>
             ))}
 
             <div>
-              <p className="font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink)]">
+              <p className="font-mono-ui text-label uppercase tracking-[0.14em] text-[var(--ink)]">
                 Elsewhere
               </p>
               <Elsewhere />
@@ -143,20 +134,16 @@ const Footer = () => {
       </div>
 
       <div className="border-t border-[var(--rule)]">
-        <div className="mx-auto flex max-w-[1440px] flex-col gap-3 px-6 py-4 font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--ink-soft)] md:flex-row md:items-center md:justify-between md:px-10">
+        <div className="mx-auto flex max-w-[1440px] flex-col gap-3 px-6 py-4 font-mono-ui text-label tracking-[0.14em] text-[var(--ink-soft)] md:flex-row md:items-center md:justify-between md:px-10">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
             <span>© {new Date().getFullYear()} Shivam Kumar</span>
-            <span aria-hidden="true" className="text-[var(--rule)]">/</span>
-            <Link to="/cookies" className="transition-colors hover:text-[var(--signal)]">
-              Cookies
-            </Link>
             <span aria-hidden="true" className="text-[var(--rule)]">/</span>
             <button
               type="button"
               onClick={() => window.dispatchEvent(new Event('cookie_consent_open'))}
               className="cursor-pointer uppercase tracking-[0.14em] transition-colors hover:text-[var(--signal)]"
             >
-              Cookie Settings
+              Cookie settings
             </button>
           </div>
           <span>Set in Instrument Serif &amp; IBM Plex</span>
