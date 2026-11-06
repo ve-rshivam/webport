@@ -422,6 +422,9 @@ function ClientPortal() {
   const secondaryButtonClass =
     'inline-flex items-center justify-center rounded-lg border border-[var(--ink)] bg-transparent px-5 py-2.5 text-sm font-medium text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)] focus:outline-none focus:ring-2 focus:ring-[var(--signal)] focus:ring-offset-2 focus:ring-offset-[var(--paper)] disabled:cursor-not-allowed disabled:opacity-50';
 
+  const dangerButtonClass =
+    'inline-flex items-center justify-center rounded-lg border border-red-800/40 bg-red-950/20 px-4 py-2 text-sm font-medium text-red-900 transition-colors hover:bg-red-950/40 focus:outline-none focus:ring-2 focus:ring-[var(--signal)] focus:ring-offset-2 focus:ring-offset-[var(--paper)]';
+
   const fieldClass =
     'w-full rounded-lg border border-[var(--rule)] bg-[var(--paper)] px-3 py-2 text-sm text-[var(--ink)] placeholder-[var(--ink-soft)] transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--signal)] focus:border-transparent';
 
@@ -430,7 +433,7 @@ function ClientPortal() {
   return (
     <PageWrapper>
       <div className="mx-auto min-h-screen w-full max-w-[1440px] px-6 pb-16 md:px-10">
-        <header className="mb-10 flex flex-wrap items-end justify-between gap-4">
+        <header className="mb-10">
           <div>
             <p className="eyebrow text-[var(--signal)]">Client portal</p>
             <h1 className="mt-2 font-display text-3xl leading-tight text-[var(--ink)]">
@@ -441,25 +444,25 @@ function ClientPortal() {
                 ? 'Signed in to your project dashboard.'
                 : 'Enter the email and password sent to you after your payment was verified.'}
             </p>
+            {isLoggedIn && (
+              <div className="mt-4 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowSettings(true)}
+                  className={secondaryButtonClass}
+                >
+                  Settings
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className={dangerButtonClass}
+                >
+                  Sign out
+                </button>
+              </div>
+            )}
           </div>
-          {isLoggedIn && (
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => setShowSettings(true)}
-                className={buttonClass}
-              >
-                Settings
-              </button>
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="rounded-lg border border-red-800/40 bg-red-950/20 px-4 py-2 text-sm font-medium text-red-900 transition-colors hover:bg-red-950/40"
-              >
-                Sign out
-              </button>
-            </div>
-          )}
         </header>
 
         <AnimatePresence>
@@ -550,7 +553,7 @@ function ClientPortal() {
                               setForgotMsg('');
                               setForgotError('');
                             }}
-                            className="shrink-0 text-sm text-[var(--ink-soft)] underline underline-offset-2 transition-colors hover:text-[var(--signal)]"
+                            className="shrink-0 text-sm text-[var(--signal)] underline underline-offset-2 transition-colors hover:opacity-80"
                           >
                             Cancel
                           </button>
@@ -760,11 +763,7 @@ function ClientPortal() {
                     onClick={() => setActiveTab('overview')}
                     aria-selected={activeTab === 'overview'}
                     aria-controls="portal-overview-panel"
-                    className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-                      activeTab === 'overview'
-                        ? 'bg-[var(--ink)] text-[var(--paper)]'
-                        : 'border border-[var(--rule)] bg-[var(--paper)] text-[var(--ink-soft)] hover:text-[var(--ink)]'
-                    }`}
+                    className={activeTab === 'overview' ? buttonClass : secondaryButtonClass}
                   >
                     Project overview
                   </button>
@@ -775,11 +774,7 @@ function ClientPortal() {
                     onClick={() => setActiveTab('preview')}
                     aria-selected={activeTab === 'preview'}
                     aria-controls="portal-preview-panel"
-                    className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-                      activeTab === 'preview'
-                        ? 'bg-[var(--ink)] text-[var(--paper)]'
-                        : 'border border-[var(--rule)] bg-[var(--paper)] text-[var(--ink-soft)] hover:text-[var(--ink)]'
-                    }`}
+                    className={activeTab === 'preview' ? buttonClass : secondaryButtonClass}
                   >
                     Live preview
                   </button>
@@ -821,7 +816,7 @@ function ClientPortal() {
                 >
               <div className="mb-10 grid grid-cols-1 gap-6 md:grid-cols-12 md:gap-x-8">
                 <div className="col-span-12 md:col-span-7">
-                  <p className="eyebrow text-[var(--ink-soft)]">Project overview</p>
+                  <p className="eyebrow text-[var(--ink-soft)]">Overview</p>
                   <h2 className="mt-2 font-display text-3xl leading-tight text-[var(--ink)]">
                     {projectData.projectTitle || 'Untitled project'}
                   </h2>
@@ -913,7 +908,14 @@ function ClientPortal() {
                 <div className="col-span-12 md:col-span-7">
                   <p className="eyebrow text-[var(--ink-soft)]">Live progress</p>
                   <div className="mt-4 rounded-xl border border-[var(--rule)] bg-[var(--paper)] p-6">
-                    <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--paper-2)]">
+                    <div
+                      className="h-2.5 w-full overflow-hidden rounded-full bg-[var(--paper-2)]"
+                      role="progressbar"
+                      aria-label="Project progress"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Number(projectData.progress) || 0}
+                    >
                       <div
                         className="h-full rounded-full bg-[var(--signal)] transition-all duration-500 ease-out"
                         style={{ width: `${projectData.progress || 0}%` }}
@@ -956,13 +958,7 @@ function ClientPortal() {
                         </dl>
                       </li>
                     </ul>
-                    <button
-                      type="button"
-                      onClick={handlePayRemaining}
-                      className={`${buttonClass} mt-4 w-full`}
-                    >
-                      Pay remaining balance
-                    </button>
+
                   </div>
                 </div>
               </div>
@@ -985,7 +981,7 @@ function ClientPortal() {
                 </div>
                 <div className="col-span-12 md:col-span-5">
                   <p className="eyebrow text-[var(--ink-soft)]">Inside the portal</p>
-                  <ul className="mt-5 border-t border-[var(--rule)] text-sm">
+                  <ul className="mt-4 border-t border-[var(--rule)] text-sm">
                     {[
                       ['01', 'Live progress', 'Where the build stands right now.'],
                       ['02', 'Payments', 'What is settled and what remains due.'],
@@ -994,7 +990,7 @@ function ClientPortal() {
                     ].map(([index, title, description]) => (
                       <li
                         key={index}
-                        className="flex gap-5 border-b border-[var(--rule)] py-4"
+                        className="flex gap-5 border-b border-[var(--rule)] py-2.5"
                       >
                         <span className="font-mono-ui text-[10px] tracking-[0.14em] text-[var(--signal)]">
                           {index}
@@ -1145,7 +1141,7 @@ function ClientPortal() {
                       setShowWelcomePopup(false);
                       setShowSettings(true);
                     }}
-                    className={buttonClass}
+                    className={secondaryButtonClass}
                   >
                     Settings
                   </button>
@@ -1218,7 +1214,7 @@ function ClientPortal() {
                     <button
                       type="button"
                       onClick={handleLogout}
-                      className="rounded-lg border border-red-800/40 bg-red-950/20 px-4 py-2 text-sm font-medium text-red-900 transition-colors hover:bg-red-950/40"
+                      className={dangerButtonClass}
                     >
                       Sign out
                     </button>
@@ -1231,7 +1227,7 @@ function ClientPortal() {
                     <button
                       type="button"
                       onClick={handleLogoutAll}
-                      className="rounded-lg border border-red-800/40 bg-red-950/20 px-4 py-2 text-sm font-medium text-red-900 transition-colors hover:bg-red-950/40"
+                      className={dangerButtonClass}
                     >
                       Sign out of all devices
                     </button>

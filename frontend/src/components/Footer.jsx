@@ -111,7 +111,7 @@ const Footer = () => {
                 <p className="font-mono-ui text-label uppercase tracking-[0.14em] text-[var(--ink)]">
                   {group.title}
                 </p>
-                <ul className={group.links.length > 4 ? 'mt-3 grid grid-cols-2 gap-x-6 gap-y-2.5' : 'mt-3 space-y-2.5'}>
+                <ul className={group.links.length > 4 ? 'mt-3 grid grid-cols-2 gap-x-8 gap-y-2.5' : 'mt-3 space-y-2.5'}>
                   {group.links.map((link) => (
                     <li key={`${group.title}-${link.path}`}>
                       <Link
