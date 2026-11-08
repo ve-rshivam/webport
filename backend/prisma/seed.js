@@ -52,3 +52,13 @@ main()
     await prisma.$disconnect();
     await pool.end(); // Close the pool
   });
+  main()
+  .then(() => {
+    // This tells Node to forcefully exit with a "Success" code
+    process.exit(0); 
+  })
+  .catch((e) => {
+    console.error(e);
+    // This tells Node to exit with a "Failure" code
+    process.exit(1); 
+  });   
