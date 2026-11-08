@@ -102,7 +102,7 @@ const AnimatedRoutes = () => {
         <Route path="/legal" element={<PageWrapper><Legal /></PageWrapper>} />
         <Route path="/cookies" element={<PageWrapper><Cookies /></PageWrapper>} />
         <Route path="/reviews" element={<PageWrapper><Reviews /></PageWrapper>} />
-        <Route path="/admin/crm/*" element={<CrmRoute />} />
+        <Route path="/crm/*" element={<CrmRoute />} />
         <Route path="/admin" element={<AdminRoute />} />
         <Route path="/admin/*" element={<AdminRoute />} />
         <Route path="/experience" element={<PageWrapper><Experience /></PageWrapper>} />
