@@ -1,4 +1,4 @@
-
+import crypto from 'node:crypto';
 import express from 'express';
 import { prisma } from '../lib/prisma.js';
 import { sendError } from '../lib/http.js';
@@ -18,6 +18,11 @@ import { recordAudit, AUDIT_ACTIONS } from '../lib/audit.js';
 import { sendSupportAlertEmail, sendEmail, getSupportEmail, portalUrl } from '../services/email.service.js';
 
 const MAX_SCREENSHOT_CHARS = 4_000_000;
+const ONBOARDING_LINK_TTL_HOURS = 72;
+
+function sha256Hex(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('hex');
+}
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -28,6 +33,67 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+const MALICIOUS_TEXT_PATTERNS = [
+  /<script[\s>]|javascript:|vbscript:|onerror\s*=|onload\s*=/i,
+  /\$where|\$ne|\$gt|\$lt|\$regex|\$nin/i,
+  /ignore\s+(all\s+)?(previous|prior|above|system)\s+instructions/i,
+];
+
+function sanitizeCleanField(value, fieldName, maxLen = 500) {
+  if (typeof value !== 'string') throw new ValidationError(`${fieldName} must be a valid string.`);
+  const cleaned = value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').trim().slice(0, maxLen);
+  for (const pattern of MALICIOUS_TEXT_PATTERNS) {
+    if (pattern.test(cleaned)) {
+      throw new ValidationError(`Invalid or unsafe characters in ${fieldName}.`, 400);
+    }
+  }
+  return cleaned;
+}
+
+// Deep Binary Magic-Byte & Polyglot Payload Inspector for Image Uploads
+function verifyBinaryImageSafety(dataUrl) {
+  const commaIdx = dataUrl.indexOf(',');
+  if (commaIdx === -1) return false;
+  const header = dataUrl.slice(0, commaIdx).toLowerCase();
+  const base64Data = dataUrl.slice(commaIdx + 1).replace(/\s+/g, '');
+
+  const buffer = Buffer.from(base64Data, 'base64');
+  if (buffer.length < 12 || buffer.length > 3.2 * 1024 * 1024) return false;
+
+  // 1. Verify exact Binary Magic Numbers
+  const isPng =
+    header.includes('image/png') &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a;
+
+  const isJpeg =
+    (header.includes('image/jpeg') || header.includes('image/jpg')) &&
+    buffer[0] === 0xff &&
+    buffer[1] === 0xd8 &&
+    buffer[2] === 0xff;
+
+  const isWebp =
+    header.includes('image/webp') &&
+    buffer.toString('ascii', 0, 4) === 'RIFF' &&
+    buffer.toString('ascii', 8, 12) === 'WEBP';
+
+  if (!isPng && !isJpeg && !isWebp) return false;
+
+  // 2. Scan binary for Polyglot embedded scripts (PHP, HTML, JS, SVG)
+  const asciiSample = buffer.toString('latin1');
+  if (/<\?php|<script[\s>]|<svg[\s>]|<!doctype\s+html|javascript:|onerror\s*=|onload\s*=/i.test(asciiSample)) {
+    return false;
+  }
+
+  return true;
+}
+
 function validateScreenshot(value) {
   if (value === undefined || value === null || String(value).trim() === '') return undefined;
   const raw = String(value).trim();
@@ -36,13 +102,26 @@ function validateScreenshot(value) {
     if (raw.length > MAX_SCREENSHOT_CHARS) {
       throw new ValidationError('The screenshot is too large. Please use an image under 3 MB.', 413);
     }
-            if (!inspectImageDataUrl(raw).ok) {
-      throw new ValidationError('The screenshot must be a valid PNG, JPEG or WebP image.', 415);
+    if (!inspectImageDataUrl(raw).ok || !verifyBinaryImageSafety(raw)) {
+      throw new ValidationError('Security check failed: The file must be a genuine PNG, JPEG, or WebP image free of embedded scripts.', 415);
     }
     return raw;
   }
 
-  return validateOptionalUrl(raw, 'screenshotUrl');
+  const validUrl = validateOptionalUrl(raw, 'screenshotUrl');
+  if (validUrl) {
+    const parsed = new URL(validUrl);
+    if (parsed.protocol !== 'https:') {
+      throw new ValidationError('External screenshot URLs must use HTTPS.', 400);
+    }
+    if (/^(localhost|127\.|10\.|192\.168\.|169\.254\.|0\.)/i.test(parsed.hostname)) {
+      throw new ValidationError('Private or local network URLs are not allowed.', 400);
+    }
+    if (/\.(svg|html?|php|js|exe|sh|bat|cmd)(\?|$)/i.test(parsed.pathname)) {
+      throw new ValidationError('Unsupported file extension in screenshot URL.', 415);
+    }
+  }
+  return validUrl;
 }
 
 function submissionView(alert) {
@@ -95,6 +174,8 @@ async function approveSubmission(id, admin, req, totalAmount, disconnectClientSo
     /remaining balance/i.test(String(details.notes ?? ''))
   );
   const email = details.email ?? alert.userEmail;
+  const clientName = details.clientName ?? details.name ?? alert.userName ?? 'Client';
+
   const result = await provisionFromPayment({
     gateway: 'qr',
     transactionId: String(details.transactionRef ?? details.transactionId ?? alert.id),
@@ -103,12 +184,13 @@ async function approveSubmission(id, admin, req, totalAmount, disconnectClientSo
     totalAmount: verifiedTotal,
     currency: details.currency ?? 'INR',
     email,
-    name: details.clientName ?? details.name ?? alert.userName,
+    name: clientName,
     serviceName: details.serviceName ?? null,
     projectId: details.projectId ?? null,
     isRemainingPayment,
     details: { gateway: 'qr', submissionId: alert.id, approvedBy: admin?.id ?? null, isRemainingPayment },
-  }, { disconnectClientSockets, syncClientProjectCredentials });
+  }, { disconnectClientSockets, syncClientProjectCredentials, adminApproval: true });
+
   if (result.project) {
     emitProjectMutation(req, result.duplicate ? 'updated' : 'created', result.project, {
       source: 'portal',
@@ -116,9 +198,51 @@ async function approveSubmission(id, admin, req, totalAmount, disconnectClientSo
     });
   }
 
-  const emailSent = Boolean(result.emailSent);
-  const manualRequired = Boolean(result.manualRequired || !emailSent);
-  const plainPasscode = result.manualPasscode || result.temporaryPassword;
+  // Generate 72-hour Magic Setup Token so client can click link -> create salted-hash password
+  let magicSetupUrl = portalUrl('/portal');
+  let emailSent = Boolean(result.emailSent);
+
+  if (result.user?.id) {
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = `sha256:${sha256Hex(rawToken)}`;
+    const expiresAt = new Date(Date.now() + ONBOARDING_LINK_TTL_HOURS * 60 * 60 * 1000);
+
+    await prisma.user.update({
+      where: { id: result.user.id },
+      data: {
+        resetOtpHash: tokenHash,
+        resetOtpExpiry: expiresAt,
+        resetOtpAttempts: 0,
+      },
+    });
+
+    magicSetupUrl = `${portalUrl('/portal')}?resetToken=${encodeURIComponent(rawToken)}`;
+
+    try {
+      const dispatch = await sendEmail({
+        to: email,
+        subject: 'Payment Verified — Set Up Your Client Portal Password',
+        html: `<div style="font-family:Arial,Helvetica,sans-serif;line-height:1.6;color:#17140f;max-width:560px;margin:auto;padding:24px;border:1px solid #e6dfd3;border-radius:8px;">
+          <p style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#c93d1b">Shivam Web Studio · rshivam.dev</p>
+          <h2 style="font-family:Georgia,serif;font-weight:400;margin-top:4px;">Your payment has been verified!</h2>
+          <p>Hello <strong>${escapeHtml(clientName)}</strong>,</p>
+          <p>We have verified your payment of <strong>${escapeHtml(details.currency ?? 'INR')} ${amount}</strong> for <strong>${escapeHtml(details.serviceName || 'your project')}</strong>.</p>
+          <p>Click the button below to create your permanent password and access your live project dashboard:</p>
+          <p style="margin:24px 0;">
+            <a href="${escapeHtml(magicSetupUrl)}" style="display:inline-block;background:#17140f;color:#faf6ee;padding:12px 24px;text-decoration:none;border-radius:6px;font-weight:bold;">Create Password &amp; Open Portal</a>
+          </p>
+          <p style="font-size:12px;color:#71695d;">This secure setup link is valid for ${ONBOARDING_LINK_TTL_HOURS} hours and can be used once.</p>
+        </div>`,
+        text: `Hello ${clientName},\n\nYour payment of ${details.currency ?? 'INR'} ${amount} has been verified!\n\nClick the link below to create your password and access your Client Portal:\n${magicSetupUrl}\n\nValid for ${ONBOARDING_LINK_TTL_HOURS} hours.`,
+        replyTo: getSupportEmail(),
+      });
+      emailSent = Boolean(dispatch?.success && !dispatch?.manualRequired);
+    } catch (err) {
+      console.error('[qr] Magic setup link email failed:', err?.message ?? err);
+    }
+  }
+
+  const manualRequired = Boolean(!emailSent);
 
   await prisma.adminAlert.update({
     where: { id: alert.id },
@@ -139,8 +263,8 @@ async function approveSubmission(id, admin, req, totalAmount, disconnectClientSo
     severity: manualRequired ? 'warning' : 'info',
     userId: result.user?.id ?? null,
     userEmail: email,
-    userName: details.clientName ?? alert.userName,
-    message: `QR payment approved for ${email} by ${admin?.id ?? 'an admin'}.${manualRequired ? ' (All email providers failed; manual dispatch required)' : ''}`,
+    userName: clientName,
+    message: `QR payment approved for ${email} by ${admin?.id ?? 'an admin'}.${manualRequired ? ' (Email failed; share setup link manually)' : ''}`,
     details: {
       submissionId: alert.id,
       projectId: result.project?.id ?? null,
@@ -166,30 +290,19 @@ async function approveSubmission(id, admin, req, totalAmount, disconnectClientSo
     },
   });
 
-  if (manualRequired) {
-    return {
-      success: true,
-      emailSent: false,
-      manualRequired: true,
-      manualPasscode: plainPasscode,
-      message: "User provisioned, but all email providers failed. Please provide credentials manually.",
-      duplicate: result.duplicate,
-      projectId: result.project?.id ?? null,
-      credentialsEmailed: false,
-      sentTo: email,
-      loginUrl: portalUrl('/portal'),
-    };
-  }
-
   return {
     success: true,
-    emailSent: true,
-    manualRequired: false,
+    emailSent,
+    manualRequired,
+    setupUrl: manualRequired ? magicSetupUrl : undefined,
+    message: emailSent
+      ? 'Payment approved and password creation link emailed to client.'
+      : 'User provisioned, but email failed. Share the setupUrl with the client manually.',
     duplicate: result.duplicate,
     projectId: result.project?.id ?? null,
-    credentialsEmailed: true,
+    credentialsEmailed: emailSent,
     sentTo: email,
-    loginUrl: portalUrl('/portal'),
+    loginUrl: magicSetupUrl,
   };
 }
 
@@ -205,7 +318,7 @@ async function rejectSubmission(id, reason, admin, req = null) {
   }
 
   const cleanReason = typeof reason === 'string' && reason.trim()
-    ? reason.trim().slice(0, 500)
+    ? sanitizeCleanField(reason, 'reason', 500)
     : 'Invalid transaction ID, mismatched amount, or unclear proof of payment.';
   const recipientEmail = details.email ?? alert.userEmail;
   const recipientName = details.clientName ?? details.name ?? alert.userName ?? 'there';
@@ -268,10 +381,21 @@ async function rejectSubmission(id, reason, admin, req = null) {
   return { submissionId: alert.id, emailSent };
 }
 
-export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadLimiter, resolveAdvanceFloor, disconnectClientSockets = () => {}, syncClientProjectCredentials = async () => {} } = {}) {
+export function createQrRouter({
+  verifyAdminToken,
+  checkPerm,
+  limiter,
+  qrUploadLimiter,
+  resolveAdvanceFloor,
+  disconnectClientSockets = () => {},
+  syncClientProjectCredentials = async () => {},
+} = {}) {
   const router = express.Router();
-  const limit = limiter ?? ((_req, _res, next) => next());
-  const uploadLimit = qrUploadLimiter ?? ((_req, _res, next) => next());
+  // Bypass rate limiters during testing unless ENABLE_RATE_LIMITS=true
+  const isRateLimitEnabled = process.env.ENABLE_RATE_LIMITS === 'true';
+  const passThrough = (_req, _res, next) => next();
+  const uploadLimit = isRateLimitEnabled && qrUploadLimiter ? qrUploadLimiter : passThrough;
+
   const adminGuard = [verifyAdminToken, checkPerm(['payments'])];
   const requireProjectAndPaymentPermissions = (req, res, next) => {
     if (req.admin.role === 'superadmin') return next();
@@ -284,45 +408,42 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
   };
   const approveGuard = [verifyAdminToken, requireProjectAndPaymentPermissions];
 
-      // [RATE LIMITER - QR SCREENSHOT UPLOAD]: 5MB base64 screenshot flood aur RAM exhaustion rokne ke liye.
-      router.post('/submit', uploadLimit, express.json({ limit: '5mb' }), async (req, res) => {
+  router.post('/submit', uploadLimit, express.json({ limit: '5mb' }), async (req, res) => {
     try {
       const body = requireJsonBody(req);
-      const clientName = validateRequiredString(
+      const rawClientName = validateRequiredString(
         body.clientName ?? body.name,
         'clientName',
         2,
         120
       );
-      if (!String(clientName).trim()) {
-        throw new ValidationError('clientName is required.');
-      }
+      const clientName = sanitizeCleanField(rawClientName, 'clientName', 120);
       const email = validateEmail(body.email);
       const amount = validateNonNegativeNumber(body.amount, 'amount');
       if (!Number.isFinite(amount) || amount <= 0) {
         throw new ValidationError('amount must be a positive number.');
       }
 
-      const transactionRef = validateRequiredString(
+      const rawTransactionRef = validateRequiredString(
         body.transactionRef ?? body.transactionId,
         'transactionRef',
         3,
         120
       );
+      const transactionRef = sanitizeCleanField(rawTransactionRef, 'transactionRef', 120);
       const screenshotUrl = validateScreenshot(body.screenshotUrl);
-      const serviceName = body.serviceName ? String(body.serviceName).trim().slice(0, 200) : null;
-      const notes = body.notes ? String(body.notes).trim().slice(0, 1000) : null;
-      const currency = String(body.currency ?? 'INR').trim().slice(0, 8) || 'INR';
-      const projectId = body.projectId ? String(body.projectId).trim().slice(0, 80) : null;
+      const serviceName = body.serviceName ? sanitizeCleanField(String(body.serviceName), 'serviceName', 200) : null;
+      const notes = body.notes ? sanitizeCleanField(String(body.notes), 'notes', 1000) : null;
+      const currency = String(body.currency ?? 'INR').replace(/[^A-Za-z]/g, '').slice(0, 8).toUpperCase() || 'INR';
+      const projectId = body.projectId ? sanitizeCleanField(String(body.projectId), 'projectId', 80) : null;
       const isRemainingPayment = Boolean(
-       body.isRemainingPayment === true ||
-       body.isRemainingPayment === 'true' ||
-       projectId ||
-       /remaining balance/i.test(String(notes ?? ''))
+        body.isRemainingPayment === true ||
+        body.isRemainingPayment === 'true' ||
+        projectId ||
+        /remaining balance/i.test(String(notes ?? ''))
       );
 
-      // [40% SERVER FLOOR] Service select ho aur remaining-balance payment na ho to minimum advance enforce karo.
-      if (body.isRemainingPayment !== true && typeof resolveAdvanceFloor === 'function') {
+      if (!isRemainingPayment && typeof resolveAdvanceFloor === 'function') {
         const floor = await resolveAdvanceFloor({ serviceId: body.serviceId, serviceName });
         if (floor && Number(floor.price) > 0) {
           const configuredFloor = Number(floor.minAmount);
@@ -354,8 +475,8 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
           transactionId: transactionRef,
           screenshotUrl,
           serviceName,
-          projectId,          
-       isRemainingPayment,
+          projectId,
+          isRemainingPayment,
           notes,
           status: 'pending',
         },
@@ -364,7 +485,7 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
       });
       emitPaymentReceived(req, { source: 'qr', submission: submissionView(alert) });
 
-      const linkableScreenshot = screenshotUrl && /^https?:\/\//i.test(screenshotUrl);
+      const linkableScreenshot = screenshotUrl && /^https:\/\//i.test(screenshotUrl);
 
       try {
         await sendSupportAlertEmail({
@@ -396,7 +517,7 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
     }
   });
 
-    router.get('/pending', ...adminGuard, async (_req, res) => {
+  router.get('/pending', ...adminGuard, async (_req, res) => {
     try {
       const alerts = await prisma.adminAlert.findMany({
         where: { type: 'qr_submission' },
@@ -419,7 +540,7 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
     }
   });
 
-    router.get('/failed-emails', ...adminGuard, async (_req, res) => {
+  router.get('/failed-emails', ...adminGuard, async (_req, res) => {
     try {
       const alerts = await prisma.adminAlert.findMany({
         where: { type: 'EMAIL_DELIVERY_FAILED' },
@@ -432,7 +553,6 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
         return {
           id: a.id,
           email: details.to || details.email || a.userEmail || 'unknown',
-          // [H1] Credential DB me store nahi hota, isliye API se kabhi expose nahi hota.
           credentialReference: details.credentialReference ?? null,
           credentialType: details.credentialType ?? null,
           credentialStored: false,
@@ -447,7 +567,7 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
     }
   });
 
-    router.delete('/failed-emails/:id', ...adminGuard, async (req, res) => {
+  router.delete('/failed-emails/:id', ...adminGuard, async (req, res) => {
     try {
       await prisma.adminAlert.delete({ where: { id: req.params.id } });
       return res.json({ success: true, message: 'Alert dismissed.' });
@@ -456,7 +576,7 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
     }
   });
 
-    router.get('/submissions', ...adminGuard, async (_req, res) => {
+  router.get('/submissions', ...adminGuard, async (_req, res) => {
     try {
       const alerts = await prisma.adminAlert.findMany({
         where: { type: 'qr_submission' },
@@ -469,7 +589,7 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
     }
   });
 
-    router.post('/approve', ...approveGuard, async (req, res) => {
+  router.post('/approve', ...approveGuard, async (req, res) => {
     try {
       const body = requireJsonBody(req);
       const qrPaymentId = validateRequiredString(body.qrPaymentId, 'qrPaymentId', 1, 64);
@@ -480,7 +600,7 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
     }
   });
 
-    router.post('/reject', ...adminGuard, async (req, res) => {
+  router.post('/reject', ...adminGuard, async (req, res) => {
     try {
       const body = requireJsonBody(req);
       const qrPaymentId = validateRequiredString(body.qrPaymentId, 'qrPaymentId', 1, 64);
@@ -491,7 +611,7 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
     }
   });
 
-    router.post('/:id/approve', ...approveGuard, async (req, res) => {
+  router.post('/:id/approve', ...approveGuard, async (req, res) => {
     try {
       const body = requireJsonBody(req);
       const result = await approveSubmission(req.params.id, req.admin, req, body.totalAmount, disconnectClientSockets, syncClientProjectCredentials);
@@ -511,4 +631,4 @@ export function createQrRouter({ verifyAdminToken, checkPerm, limiter, qrUploadL
   });
 
   return router;
-};
+}

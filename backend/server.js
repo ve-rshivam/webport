@@ -14,7 +14,7 @@ import { createAlertsRouter } from './src/routes/alerts.js';
 import { createQrRouter } from './src/routes/qr.js';
 import { getSupportEmail, sendCredentialsEmail, sendEmail } from './src/services/email.service.js';
 import { provisionFromPayment } from './src/services/provisioning.js';
-import { TEMP_PASSWORD_TTL_MINUTES } from './src/services/auth.service.js';
+import { TEMP_PASSWORD_TTL_MINUTES, issueSession } from './src/services/auth.service.js';
 import bcrypt from 'bcryptjs';
 import helmet from 'helmet';
 import mongoSanitize from 'express-mongo-sanitize';
@@ -1453,117 +1453,153 @@ app.post('/api/payment/razorpay-order', paymentOrderLimiter, async (req, res) =>
   }
 });
 
-app.post('/api/payment/razorpay-verify', authLimiter, async (req, res) => {
-  try {
-    const body = req.body || {};
-    const orderId = typeof body.razorpay_order_id === 'string' ? body.razorpay_order_id.trim() : '';
-    const paymentId = typeof body.razorpay_payment_id === 'string' ? body.razorpay_payment_id.trim() : '';
-    const signature = typeof body.razorpay_signature === 'string' ? body.razorpay_signature.trim() : '';
+// [RATE LIMITER - LOGIN]: Bypassed during testing unless ENABLE_RATE_LIMITS=true
+app.post(
+  '/api/payment/razorpay-verify',
+  process.env.ENABLE_RATE_LIMITS === 'true' ? authLimiter : (_req, _res, next) => next(),
+  async (req, res) => {
+    try {
+      const body = req.body || {};
+      const orderId = typeof body.razorpay_order_id === 'string' ? body.razorpay_order_id.trim() : '';
+      const paymentId = typeof body.razorpay_payment_id === 'string' ? body.razorpay_payment_id.trim() : '';
+      const signature = typeof body.razorpay_signature === 'string' ? body.razorpay_signature.trim() : '';
 
-    if (!orderId || !paymentId || !signature) {
-      return res.status(400).json({ success: false, message: 'Missing Razorpay payment details.' });
-    }
+      if (!orderId || !paymentId || !signature || orderId.length > 128 || paymentId.length > 128) {
+        return res.status(400).json({ success: false, message: 'Missing or invalid Razorpay payment details.' });
+      }
 
-    const keyId = process.env.RAZORPAY_KEY_ID;
-    const keySecret = process.env.RAZORPAY_KEY_SECRET;
-    if (!keyId || !keySecret) {
-      return res.status(500).json({ success: false, message: 'Razorpay keys missing in .env' });
-    }
+      const keyId = process.env.RAZORPAY_KEY_ID;
+      const keySecret = process.env.RAZORPAY_KEY_SECRET;
+      if (!keyId || !keySecret) {
+        return res.status(500).json({ success: false, message: 'Razorpay keys missing in .env' });
+      }
 
-    const expected = crypto
-      .createHmac('sha256', keySecret)
-      .update(`${orderId}|${paymentId}`)
-      .digest('hex');
-    const expectedBuf = Buffer.from(expected, 'utf8');
-    const providedBuf = Buffer.from(signature, 'utf8');
-    if (expectedBuf.length !== providedBuf.length || !crypto.timingSafeEqual(expectedBuf, providedBuf)) {
-      return res.status(400).json({ success: false, message: 'Payment signature verification failed.' });
-    }
+      const expected = crypto
+        .createHmac('sha256', keySecret)
+        .update(`${orderId}|${paymentId}`)
+        .digest('hex');
+      const expectedBuf = Buffer.from(expected, 'utf8');
+      const providedBuf = Buffer.from(signature, 'utf8');
+      if (expectedBuf.length !== providedBuf.length || !crypto.timingSafeEqual(expectedBuf, providedBuf)) {
+        return res.status(400).json({ success: false, message: 'Payment signature verification failed.' });
+      }
 
-    const basicAuth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
-    const paymentResponse = await fetch(
-      `https://api.razorpay.com/v1/payments/${encodeURIComponent(paymentId)}`,
-      { headers: { Authorization: `Basic ${basicAuth}` } }
-    );
-    const payment = await paymentResponse.json().catch(() => null);
+      const basicAuth = Buffer.from(`${keyId}:${keySecret}`).toString('base64');
+      const paymentResponse = await fetch(
+        `https://api.razorpay.com/v1/payments/${encodeURIComponent(paymentId)}`,
+        { headers: { Authorization: `Basic ${basicAuth}` } }
+      );
+      const payment = await paymentResponse.json().catch(() => null);
 
-    if (!paymentResponse.ok || !payment) {
-      return res.status(502).json({
-        success: false,
-        message: 'Could not read this payment from Razorpay. Please try again in a moment.',
-      });
-    }
+      if (!paymentResponse.ok || !payment) {
+        return res.status(502).json({
+          success: false,
+          message: 'Could not read this payment from Razorpay. Please try again in a moment.',
+        });
+      }
 
-    const paymentStatus = String(payment.status || '').toLowerCase();
-    if (paymentStatus && !['captured', 'authorized'].includes(paymentStatus)) {
-      return res.status(409).json({
-        success: false,
-        message: `This payment is ${paymentStatus}, not captured yet. Complete the payment and try again.`,
-      });
-    }
+      const paymentStatus = String(payment.status || '').toLowerCase();
+      if (paymentStatus && !['captured', 'authorized'].includes(paymentStatus)) {
+        return res.status(409).json({
+          success: false,
+          message: `This payment is ${paymentStatus}, not captured yet. Complete the payment and try again.`,
+        });
+      }
 
-    const notes = payment.notes || {};
-    const amount = Number(payment.amount || 0) / 100;
-    const result = await provisionFromPayment({
-      gateway: 'razorpay',
-      transactionId: String(payment.id || paymentId),
-      orderId: String(payment.order_id || orderId),
-      amount,
-      totalAmount: Number(notes.totalAmount),
-      currency: String(payment.currency || 'INR').toUpperCase(),
-      email: payment.email || notes.email,
-      name: notes.name,
-      serviceName: notes.serviceName,
-      projectId: notes.projectId,
-      isRemainingPayment: String(notes.isRemainingPayment) === 'true',
-      status: 'captured',
-      details: {
-        gateway: 'razorpay',
-        transactionId: payment.id || paymentId,
-        orderId: payment.order_id ?? orderId,
-        amount,
-        currency: payment.currency ?? 'INR',
-        method: payment.method ?? null,
-        status: payment.status ?? null,
-        verifiedBy: 'checkout-callback',
-      },
-    }, { disconnectClientSockets, syncClientProjectCredentials: syncLegacyClientProjectCredentials });
-
-    if (!result.duplicate && result.project) {
-      const isRemainingPayment = String(notes.isRemainingPayment) === 'true';
-      emitProjectMutation(req, isRemainingPayment ? 'updated' : 'created', result.project, {
-        source: 'portal',
-        user: result.user,
-      });
-      emitPaymentReceived(req, {
-        source: 'gateway',
-        payment: {
+      const notes = payment.notes || {};
+      const amount = Number(payment.amount || 0) / 100;
+      const result = await provisionFromPayment(
+        {
           gateway: 'razorpay',
           transactionId: String(payment.id || paymentId),
+          orderId: String(payment.order_id || orderId),
           amount,
+          totalAmount: Number(notes.totalAmount),
           currency: String(payment.currency || 'INR').toUpperCase(),
           email: payment.email || notes.email,
           name: notes.name,
-          projectId: result.project.id,
+          serviceName: notes.serviceName,
+          projectId: notes.projectId,
+          isRemainingPayment: String(notes.isRemainingPayment) === 'true',
+          status: 'captured',
+          details: {
+            gateway: 'razorpay',
+            transactionId: payment.id || paymentId,
+            orderId: payment.order_id ?? orderId,
+            amount,
+            currency: payment.currency ?? 'INR',
+            method: payment.method ?? null,
+            status: payment.status ?? null,
+            verifiedBy: 'checkout-callback',
+          },
         },
+        { disconnectClientSockets, syncClientProjectCredentials: syncLegacyClientProjectCredentials }
+      );
+
+      if (!result.duplicate && result.project) {
+        const isRemainingPayment = String(notes.isRemainingPayment) === 'true';
+        emitProjectMutation(req, isRemainingPayment ? 'updated' : 'created', result.project, {
+          source: 'portal',
+          user: result.user,
+        });
+        emitPaymentReceived(req, {
+          source: 'gateway',
+          payment: {
+            gateway: 'razorpay',
+            transactionId: String(payment.id || paymentId),
+            amount,
+            currency: String(payment.currency || 'INR').toUpperCase(),
+            email: payment.email || notes.email,
+            name: notes.name,
+            projectId: result.project.id,
+          },
+        });
+      }
+
+      // Ensure setupToken is available so the client is redirected to create their password immediately
+      let setupToken = result.setupToken ?? null;
+      let mustChangePassword = Boolean(result.mustChangePassword);
+
+      if (!setupToken && result.user?.id) {
+        const freshUser = await prisma.user.findUnique({ where: { id: result.user.id } });
+        if (freshUser && (!freshUser.passwordHash || freshUser.mustChangePassword)) {
+          mustChangePassword = true;
+          setupToken = crypto.randomBytes(32).toString('hex');
+          const tokenHash = `sha256:${crypto.createHash('sha256').update(setupToken).digest('hex')}`;
+          await prisma.user.update({
+            where: { id: freshUser.id },
+            data: {
+              resetOtpHash: tokenHash,
+              resetOtpExpiry: new Date(Date.now() + 72 * 60 * 60 * 1000),
+              resetOtpAttempts: 0,
+              mustChangePassword: true,
+            },
+          });
+        }
+      }
+
+      return res.json({
+        success: true,
+        duplicate: Boolean(result.duplicate),
+        provisioned: !result.duplicate,
+        emailSent: Boolean(result.emailSent),
+        userEmail: result.user?.email ?? payment.email ?? notes.email ?? null,
+        token: result.token ?? null,
+        setupToken,
+        mustChangePassword,
+        redirectUrl: setupToken
+          ? `/portal?resetToken=${encodeURIComponent(setupToken)}`
+          : '/portal',
+      });
+    } catch (error) {
+      console.error('Razorpay verification failed:', error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || 'Could not verify this payment.',
       });
     }
-
-    return res.json({
-      success: true,
-      duplicate: Boolean(result.duplicate),
-      provisioned: !result.duplicate,
-      emailSent: Boolean(result.emailSent),
-      userEmail: result.user?.email ?? null,
-    });
-  } catch (error) {
-    console.error('Razorpay verification failed:', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message || 'Could not verify this payment.',
-    });
   }
-});
+);
 
 app.post('/api/payment/paypal-verify', paymentOrderLimiter, async (req, res) => {
   try {

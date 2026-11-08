@@ -1,4 +1,3 @@
-
 import crypto from 'node:crypto';
 import express from 'express';
 import { prisma } from '../lib/prisma.js';
@@ -13,20 +12,15 @@ import {
 } from '../services/validators.js';
 import {
   createPortalAuth,
-  generateOtp,
-  generateTemporaryPassword,
   hashSecret,
   issueSession,
   verifySecret,
-  OTP_TTL_MINUTES,
 } from '../services/auth.service.js';
 import { createAlert } from '../services/notifications.js';
 import { recordAudit, AUDIT_ACTIONS } from '../lib/audit.js';
 import { generateInvoicePDF } from '../services/invoiceService.js';
 import { emitMessageNew } from '../lib/realtime.js';
 import {
-  sendOtpEmail,
-  sendCredentialsEmail,
   sendEmail,
   getSupportEmail,
   sendPortalMessageEmail,
@@ -34,10 +28,25 @@ import {
   portalUrl,
 } from '../services/email.service.js';
 
-// [H2] Password reset link: 15 minute validity, single use, sirf hash DB me jaata hai.
 const RESET_TOKEN_TTL_MINUTES = 15;
 
-function sha256Hex(value) {
+const UNSAFE_CHAT_PATTERNS = [
+  /<script[\s>]|javascript:|vbscript:|onerror\s*=|onload\s*=/i,
+  /\$where|\$ne|\$gt|\$lt|\$regex|\$nin/i,
+];
+
+function sanitizePortalText(value, fieldName, maxLen = 5000) {
+  if (typeof value !== 'string') throw new ValidationError(`${fieldName} must be a string.`);
+  const cleaned = value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').trim().slice(0, maxLen);
+  for (const pattern of UNSAFE_CHAT_PATTERNS) {
+    if (pattern.test(cleaned)) {
+      throw new ValidationError(`Unsafe content blocked in ${fieldName}.`, 400);
+    }
+  }
+  return cleaned;
+}
+
+export function sha256Hex(value) {
   return crypto.createHash('sha256').update(String(value)).digest('hex');
 }
 
@@ -65,16 +74,26 @@ function projectSummary(project) {
   };
 }
 
-export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimiter, invoiceDownloadLimiter, disconnectClientSockets = () => {}, syncClientProjectCredentials = async () => {} } = {}) {
+export function createPortalRouter({
+  authLimiter,
+  otpEmailLimiter,
+  messageLimiter,
+  invoiceDownloadLimiter,
+  disconnectClientSockets = () => {},
+  syncClientProjectCredentials = async () => {},
+} = {}) {
   const router = express.Router();
   const portalAuth = createPortalAuth(prisma);
-  const limit = authLimiter ?? ((_req, _res, next) => next());
-  const otpLimit = otpEmailLimiter ?? ((_req, _res, next) => next());
-  const messageLimit = messageLimiter ?? ((_req, _res, next) => next());
-  const invoiceLimit = invoiceDownloadLimiter ?? ((_req, _res, next) => next());
 
-    // [RATE LIMITER - AUTH LOGIN]
-    router.post('/login', limit, async (req, res) => {
+  // Bypass rate limiters during testing unless ENABLE_RATE_LIMITS=true
+  const isRateLimitEnabled = process.env.ENABLE_RATE_LIMITS === 'true';
+  const passThrough = (_req, _res, next) => next();
+  const limit = isRateLimitEnabled && authLimiter ? authLimiter : passThrough;
+  const otpLimit = isRateLimitEnabled && otpEmailLimiter ? otpEmailLimiter : passThrough;
+  const messageLimit = isRateLimitEnabled && messageLimiter ? messageLimiter : passThrough;
+  const invoiceLimit = isRateLimitEnabled && invoiceDownloadLimiter ? invoiceDownloadLimiter : passThrough;
+
+  router.post('/login', limit, async (req, res) => {
     try {
       const body = requireJsonBody(req);
       const email = validateEmail(body.email);
@@ -86,7 +105,6 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
       let mustChangePassword = false;
       let authenticated = false;
 
-      // CASE 1: Temporary password active
       if (user.mustChangePassword && user.tempPasswordHash) {
         if (!user.tempPasswordExpiry || user.tempPasswordExpiry.getTime() <= Date.now()) {
           return res.status(401).json({
@@ -108,15 +126,12 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
             where: { id: user.id },
             data: { tempPasswordAttempts: { increment: 1 } },
           });
-          // Strictly reject here so old passwordHash is NEVER checked when temp password is active
           return res.status(401).json({
             success: false,
             message: 'Invalid temporary password. Your previous password is no longer valid.',
           });
         }
-      }
-      // CASE 2: Normal permanent password login
-      else if (user.passwordHash && (await verifySecret(password, user.passwordHash))) {
+      } else if (user.passwordHash && (await verifySecret(password, user.passwordHash))) {
         authenticated = true;
         mustChangePassword = false;
       }
@@ -152,7 +167,7 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
     }
   });
 
-    router.post('/set-password', portalAuth, async (req, res) => {
+  router.post('/set-password', portalAuth, async (req, res) => {
     try {
       const body = requireJsonBody(req);
       const password = validatePassword(body.password, 'password');
@@ -167,6 +182,9 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
           tempPasswordHash: null,
           tempPasswordExpiry: null,
           tempPasswordAttempts: 0,
+          resetOtpHash: null,
+          resetOtpExpiry: null,
+          resetOtpAttempts: 0,
         },
       });
       await syncClientProjectCredentials({ email: updatedUser.email, passwordHash, isTemporaryKey: false });
@@ -177,8 +195,35 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
     }
   });
 
-    // [RATE LIMITER - OTP/EMAIL]: Forgot-password email spam aur Resend/Brevo quota bachane ke liye.
-    router.post('/forgot-password', otpLimit, async (req, res) => {
+  // Verify Magic Setup / Reset Token (Used when client clicks email link or after payment redirect)
+  router.get('/verify-reset-token', otpLimit, async (req, res) => {
+    try {
+      const rawToken = typeof req.query.token === 'string' ? req.query.token.trim() : '';
+      if (!rawToken || rawToken.length < 32 || rawToken.length > 256) {
+        return res.status(400).json({ success: false, message: 'Invalid or missing setup token.' });
+      }
+      const tokenHash = `sha256:${sha256Hex(rawToken)}`;
+      const user = await prisma.user.findFirst({
+        where: { resetOtpHash: tokenHash, resetOtpExpiry: { gt: new Date() } },
+        select: { id: true, email: true, name: true },
+      });
+      if (!user) {
+        return res.status(400).json({
+          success: false,
+          message: 'This password setup link is invalid or has expired. Please request a new link.',
+        });
+      }
+      return res.json({
+        success: true,
+        email: user.email,
+        name: user.name,
+      });
+    } catch (err) {
+      return sendError(res, err, 'Could not verify setup token.');
+    }
+  });
+
+  router.post('/forgot-password', otpLimit, async (req, res) => {
     const standardMessage = 'If this email is registered, a secure reset link has been sent.';
     try {
       const body = requireJsonBody(req);
@@ -188,8 +233,6 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
         return res.json({ success: true, message: standardMessage });
       }
 
-      // [H2] Password yahan overwrite NAHI hota. Sirf single-use token ka hash + expiry store hoti hai,
-      // isliye attacker kisi ka bhi account lock nahi kar sakta.
       const rawToken = crypto.randomBytes(32).toString('hex');
       const tokenHash = `sha256:${sha256Hex(rawToken)}`;
       const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000);
@@ -244,20 +287,19 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
     }
   });
 
-    // [RATE LIMITER - OTP/EMAIL]: Reset token guessing/spam rokne ke liye.
-    router.post('/reset-password-with-token', otpLimit, async (req, res) => {
+  // Consumes magic setup token / reset token, stores salted-hash password, and issues a live session!
+  router.post('/reset-password-with-token', otpLimit, async (req, res) => {
     try {
       const body = requireJsonBody(req);
       const token = validateRequiredString(body.token, 'token', 32, 256);
-      const password = validatePassword(body.password, 'password');
+      const password = validatePassword(body.password ?? body.newPassword, 'password');
       const tokenHash = `sha256:${sha256Hex(token)}`;
 
       const user = await prisma.user.findFirst({ where: { resetOtpHash: tokenHash } });
       if (!user || !user.resetOtpExpiry || user.resetOtpExpiry.getTime() < Date.now()) {
-        throw new ValidationError('This reset link is invalid or has expired. Request a new one.');
+        throw new ValidationError('This setup/reset link is invalid or has expired. Request a new one.');
       }
 
-      // Single-use: atomic claim, do parallel requests me se sirf ek jeetegi.
       const passwordHash = await hashSecret(password);
       const consumed = await prisma.user.updateMany({
         where: { id: user.id, resetOtpHash: tokenHash, resetOtpExpiry: { gt: new Date() } },
@@ -279,10 +321,18 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
         },
       });
       if (consumed.count === 0) {
-        throw new ValidationError('This reset link has already been used. Request a new one.', 409);
+        throw new ValidationError('This link has already been used. Request a new one.', 409);
       }
+
       await syncClientProjectCredentials({ email: user.email, passwordHash, isTemporaryKey: false });
       disconnectClientSockets(user.id);
+
+      const freshUser = await prisma.user.findUnique({ where: { id: user.id } });
+      const session = await issueSession(prisma, freshUser, req);
+      const projects = await prisma.clientProject.findMany({
+        where: { OR: [{ clientUserId: freshUser.id }, { clientEmail: freshUser.email }] },
+        orderBy: { createdAt: 'desc' },
+      });
 
       await recordAudit({
         action: AUDIT_ACTIONS.PASSWORD_RESET_ISSUED,
@@ -293,14 +343,21 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
         metadata: { channel: 'portal-token' },
       });
 
-      return res.json({ success: true, message: 'Password updated. Sign in with your new password.' });
+      return res.json({
+        success: true,
+        message: 'Password created successfully.',
+        token: session.token,
+        expiresAt: session.expiresAt,
+        mustChangePassword: false,
+        user: { id: freshUser.id, email: freshUser.email, name: freshUser.name, role: freshUser.role },
+        projects: projects.map(projectSummary),
+      });
     } catch (err) {
-      return sendError(res, err, 'Could not reset the password.');
+      return sendError(res, err, 'Could not set the password.');
     }
   });
 
-    // [RATE LIMITER - OTP & EMAIL QUOTA]: OTP reset brute-force spam rokne ke liye.
-    router.post('/reset-password', otpLimit, async (req, res) => {
+  router.post('/reset-password', otpLimit, async (req, res) => {
     try {
       const body = requireJsonBody(req);
       const email = validateEmail(body.email);
@@ -314,7 +371,7 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
       if (user.resetOtpExpiry.getTime() < Date.now()) {
         throw new ValidationError('This reset code has expired. Request a new one.');
       }
-                  const claimed = await prisma.user.updateMany({
+      const claimed = await prisma.user.updateMany({
         where: {
           id: user.id,
           resetOtpHash: user.resetOtpHash,
@@ -371,7 +428,7 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
     }
   });
 
-    router.get('/me', portalAuth, async (req, res) => {
+  router.get('/me', portalAuth, async (req, res) => {
     try {
       const projects = await prisma.clientProject.findMany({
         where: { OR: [{ clientUserId: req.user.id }, { clientEmail: req.user.email }] },
@@ -388,12 +445,12 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
     }
   });
 
-      // [RATE LIMITER - PDF INVOICE]: Bar-bar PDF generation se CPU high hone se rokne ke liye.
-      router.get('/projects/:id/invoice', portalAuth, invoiceLimit, async (req, res) => {
+  router.get('/projects/:id/invoice', portalAuth, invoiceLimit, async (req, res) => {
     try {
+      const projectId = validateRequiredString(req.params.id, 'projectId', 1, 64);
       const project = await prisma.clientProject.findFirst({
         where: {
-          id: req.params.id,
+          id: projectId,
           OR: [{ clientUserId: req.user.id }, { clientEmail: req.user.email }],
         },
       });
@@ -431,14 +488,14 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
     }
   });
 
-    router.get('/messages', portalAuth, async (req, res) => {
+  router.get('/messages', portalAuth, async (req, res) => {
     try {
       const projects = await prisma.clientProject.findMany({
         where: { OR: [{ clientUserId: req.user.id }, { clientEmail: req.user.email }] },
         select: { id: true },
       });
       const projectIds = projects.map((p) => p.id);
-      const requested = typeof req.query.projectId === 'string' ? req.query.projectId : null;
+      const requested = typeof req.query.projectId === 'string' ? req.query.projectId.trim() : null;
       if (requested && !projectIds.includes(requested)) {
         return res.status(403).json({ success: false, message: 'You do not have access to that project.' });
       }
@@ -462,13 +519,15 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
     }
   });
 
-    // [RATE LIMITER - CONTACT & PORTAL CHAT]: Portal project chat me message flooding rokne ke liye.
-    router.post('/messages', portalAuth, messageLimit, async (req, res) => {
+  router.post('/messages', portalAuth, messageLimit, async (req, res) => {
     try {
       const body = requireJsonBody(req);
       const projectId = validateRequiredString(body.projectId, 'projectId', 1, 64);
-      const messageBody = validateRequiredString(body.body, 'body', 1, 5000);
-      const subject = body.subject ? validateRequiredString(body.subject, 'subject', 1, 200) : undefined;
+      const rawMessageBody = validateRequiredString(body.body, 'body', 1, 5000);
+      const messageBody = sanitizePortalText(rawMessageBody, 'body', 5000);
+      const subject = body.subject
+        ? sanitizePortalText(validateRequiredString(body.subject, 'subject', 1, 200), 'subject', 200)
+        : undefined;
 
       const project = await prisma.clientProject.findFirst({
         where: {
@@ -522,7 +581,7 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
     }
   });
 
-    router.post('/logout', portalAuth, async (req, res) => {
+  router.post('/logout', portalAuth, async (req, res) => {
     try {
       await prisma.user.update({
         where: { id: req.user.id },
@@ -535,7 +594,7 @@ export function createPortalRouter({ authLimiter, otpEmailLimiter, messageLimite
     }
   });
 
-      router.post('/logout-all', portalAuth, async (req, res) => {
+  router.post('/logout-all', portalAuth, async (req, res) => {
     try {
       await prisma.user.update({
         where: { id: req.user.id },

@@ -29,7 +29,7 @@ function ClientPortal() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState(
     pendingCheckout.paymentSubmitted
-      ? 'Payment received. Once verification finishes, sign in with the temporary password sent to your email.'
+      ? 'Payment verified! Create your permanent password below to open your dashboard.'
       : sessionExpiredNotice
   );
   const [session, setSession] = useState(null);
@@ -59,6 +59,7 @@ function ClientPortal() {
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [anyModalOpen, showPasswordModal, showSettings]);
+
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordLoading, setPasswordLoading] = useState(false);
@@ -67,19 +68,19 @@ function ClientPortal() {
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotMsg, setForgotMsg] = useState('');
   const [forgotError, setForgotError] = useState('');
-  // [H2] Secure reset link ka single-use token (/portal?resetToken=...). 6-digit OTP flow hata diya gaya.
-  const [resetToken] = useState(() => {
+
+  // Token from email magic link or Razorpay redirect (/portal?resetToken=...)
+  const [resetToken, setResetToken] = useState(() => {
     if (typeof window === 'undefined') return '';
     return new URLSearchParams(window.location.search).get('resetToken') || '';
   });
   const [resetKey, setResetKey] = useState('');
+  const [resetConfirmKey, setResetConfirmKey] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
   const [resetMsg, setResetMsg] = useState('');
   const [resetError, setResetError] = useState('');
-  const [showForgot, setShowForgot] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return Boolean(new URLSearchParams(window.location.search).get('resetToken'));
-  });
+  const [showForgot, setShowForgot] = useState(false);
+
   const [clientReply, setClientReply] = useState('');
   const [isSendingReply, setIsSendingReply] = useState(false);
   const [thread, setThread] = useState({ projectId: null, items: [], loading: false, error: '' });
@@ -87,15 +88,24 @@ function ClientPortal() {
   const [invoiceError, setInvoiceError] = useState('');
   const [activeTab, setActiveTab] = useState('overview');
 
+  // Keep resetToken synced if React Router navigates to /portal?resetToken=...
+  useEffect(() => {
+    const tokenFromUrl = new URLSearchParams(location.search).get('resetToken') || '';
+    if (tokenFromUrl) {
+      setResetToken(tokenFromUrl);
+    }
+  }, [location.search]);
+
   const projectData = projectsList.find((p) => p.id === activeProjectId) || projectsList[0];
   const threadMatches = Boolean(projectData?.id) && thread.projectId === projectData.id;
   const messages = threadMatches ? thread.items : [];
   const messagesLoading = Boolean(projectData?.id) && (!threadMatches || thread.loading);
   const messagesError = threadMatches ? thread.error : '';
+
   useEffect(() => {
     const checkMagicSetup = async () => {
       if (typeof window === 'undefined' || isLoggedIn) return;
-      
+
       const params = new URLSearchParams(window.location.search);
       const isSetup = params.get('setup') === 'true';
       const email = params.get('email');
@@ -104,33 +114,30 @@ function ClientPortal() {
       if (isSetup && email && passcode) {
         setLoading(true);
         setError('');
-        
+
         try {
-          // Passcode se direct backend me login karein
           const data = await portalApi.login(email.trim(), passcode.trim());
           portalSession.save(data.token, data.user?.email ?? email.trim());
 
           setSession({ user: data.user ?? null });
           setProjectsList(data.projects ?? []);
           setActiveProjectId(data.projects?.[0]?.id ?? '');
-          setMustChangePassword(true); // User ko seedha naya password bananai ke form pe bhejein
+          setMustChangePassword(true);
           setIsLoggedIn(true);
-          
-          // Clean the URL so a refresh doesn't trigger it again
+
           window.history.replaceState({}, document.title, window.location.pathname);
-          
         } catch (err) {
-          setError(err.message || 'Invalid or expired setup link. Please login manually.');
+          setError(err.message || 'Invalid or expired setup link. Please request a new link below.');
         } finally {
           setLoading(false);
         }
       }
     };
-    
+
     checkMagicSetup();
   }, [isLoggedIn]);
 
-    useEffect(() => {
+  useEffect(() => {
     const restoreSession = async () => {
       if (!portalSession.getToken()) return;
       try {
@@ -156,38 +163,45 @@ function ClientPortal() {
     const onProjectMutated = ({ action, project, user } = {}) => {
       if (!project?.id) return;
       if (user?.name || user?.email) {
-        setSession((current) => current
-          ? { ...current, user: { ...current.user, ...user } }
-          : current);
+        setSession((current) =>
+          current ? { ...current, user: { ...current.user, ...user } } : current
+        );
       }
       if (action === 'deleted') {
-        setActiveProjectId((activeId) => activeId === project.id ? '' : activeId);
+        setActiveProjectId((activeId) => (activeId === project.id ? '' : activeId));
         setProjectsList((current) => current.filter((item) => item.id !== project.id));
         return;
       }
-      setProjectsList((current) => current.some((item) => item.id === project.id)
-        ? current.map((item) => item.id === project.id ? { ...item, ...project } : item)
-        : [project, ...current]);
+      setProjectsList((current) =>
+        current.some((item) => item.id === project.id)
+          ? current.map((item) => (item.id === project.id ? { ...item, ...project } : item))
+          : [project, ...current]
+      );
       setActiveProjectId((activeId) => activeId || project.id);
     };
 
     const onMessageNew = ({ message } = {}) => {
       if (!message?.projectId) return;
       setThread((current) => {
-        if (current.projectId !== message.projectId || (current.items || []).some((item) => item.id === message.id)) {
+        if (
+          current.projectId !== message.projectId ||
+          (current.items || []).some((item) => item.id === message.id)
+        ) {
           return current;
         }
         return { ...current, items: [...(current.items || []), message] };
       });
     };
 
-    import('../lib/socket').then(({ connectRealtimeSocket }) => {
-      if (disposed) return;
-      socket = connectRealtimeSocket(portalSession.getToken());
-      if (!socket) return;
-      socket.on('project:mutated', onProjectMutated);
-      socket.on('message:new', onMessageNew);
-    }).catch((err) => console.warn('Could not connect to live portal updates:', err));
+    import('../lib/socket')
+      .then(({ connectRealtimeSocket }) => {
+        if (disposed) return;
+        socket = connectRealtimeSocket(portalSession.getToken());
+        if (!socket) return;
+        socket.on('project:mutated', onProjectMutated);
+        socket.on('message:new', onMessageNew);
+      })
+      .catch((err) => console.warn('Could not connect to live portal updates:', err));
     return () => {
       disposed = true;
       if (!socket) return;
@@ -196,7 +210,7 @@ function ClientPortal() {
     };
   }, [isLoggedIn]);
 
-    useEffect(() => {
+  useEffect(() => {
     const onExpired = () => {
       setIsLoggedIn(false);
       setSession(null);
@@ -212,7 +226,7 @@ function ClientPortal() {
     return () => window.removeEventListener('auth:expired', onExpired);
   }, []);
 
-      useEffect(() => {
+  useEffect(() => {
     if (!isLoggedIn || !projectData?.id) return undefined;
     const projectId = projectData.id;
     let cancelled = false;
@@ -267,8 +281,7 @@ function ClientPortal() {
   const handleLogout = async () => {
     try {
       await portalApi.logout();
-    } catch {
-          }
+    } catch {}
     portalSession.clear();
     import('../lib/socket').then(({ disconnectRealtimeSocket }) => disconnectRealtimeSocket());
     setIsLoggedIn(false);
@@ -284,13 +297,11 @@ function ClientPortal() {
     setNotice('');
   };
 
-  // [SESSION CONTROL] Server par session token + device binding clear karke sab devices se sign out.
   const handleLogoutAll = async () => {
     if (!window.confirm('Sign out of the portal on every device? Every active session will be revoked.')) return;
     try {
       await portalApi.logoutAll();
-    } catch {
-          }
+    } catch {}
     portalSession.clear();
     import('../lib/socket').then(({ disconnectRealtimeSocket }) => disconnectRealtimeSocket());
     setIsLoggedIn(false);
@@ -325,24 +336,45 @@ function ClientPortal() {
     }
   };
 
+  // Handles creating password via ?resetToken=... (from QR email link or Razorpay redirect)
   const handleResetWithToken = async (e) => {
     e.preventDefault();
-    if (!resetToken || resetKey.length < 8) return;
+    if (!resetToken) return;
+    if (resetKey.length < 8) {
+      setResetError('Password must be at least 8 characters long.');
+      return;
+    }
+    if (resetKey !== resetConfirmKey) {
+      setResetError('The two passwords do not match.');
+      return;
+    }
     setResetLoading(true);
     setResetMsg('');
     setResetError('');
     try {
       const data = await portalApi.resetPasswordWithToken(resetToken, resetKey);
-      setResetMsg(data.message || 'New password saved. You can now sign in with it.');
       setResetKey('');
-      setForgotMsg('');
-      setForgotError('');
-      // Token single-use hai — URL se hata dete hain taaki back/refresh par dobara na chale.
+      setResetConfirmKey('');
+      setResetToken('');
       try {
         window.history.replaceState({}, '', '/portal');
       } catch {}
+
+      // If backend returned a live session token, sign the client straight into their dashboard!
+      if (data?.token) {
+        portalSession.save(data.token, data.user?.email ?? '');
+        setSession({ user: data.user ?? null });
+        setProjectsList(data.projects ?? []);
+        setActiveProjectId(data.projects?.[0]?.id ?? '');
+        setMustChangePassword(false);
+        setIsLoggedIn(true);
+        setShowWelcomePopup(true);
+        return;
+      }
+
+      setResetMsg(data.message || 'Password saved! You can now sign in with your new password.');
     } catch (err) {
-      setResetError(err.message || 'Could not set the new password. Request a new reset link.');
+      setResetError(err.message || 'Could not set the new password. Request a new link below.');
     } finally {
       setResetLoading(false);
     }
@@ -361,6 +393,10 @@ function ClientPortal() {
       setMustChangePassword(false);
       setNewPassword('');
       setConfirmPassword('');
+      setResetToken('');
+      try {
+        window.history.replaceState({}, '', '/portal');
+      } catch {}
       setNotice('Password saved. Your portal is ready.');
     } catch (err) {
       setPasswordError(err.message || 'Could not save the password.');
@@ -462,12 +498,14 @@ function ClientPortal() {
           <div>
             <p className="eyebrow text-[var(--signal)]">Client portal</p>
             <h1 className="mt-2 font-display text-3xl leading-tight text-[var(--ink)]">
-              {session?.user?.name || 'Your project file.'}
+              {session?.user?.name || (resetToken ? 'Set up your portal password.' : 'Your project file.')}
             </h1>
             <p className="mt-1.5 max-w-md text-sm leading-6 text-[var(--ink-soft)]">
               {isLoggedIn
                 ? 'Signed in to your project dashboard.'
-                : 'Enter the email and password sent to you after your payment was verified.'}
+                : resetToken
+                ? 'Create a permanent password below to unlock your live project dashboard.'
+                : 'Sign in with your registered email and portal password.'}
             </p>
             {isLoggedIn && (
               <div className="mt-4 flex flex-wrap gap-3">
@@ -490,8 +528,84 @@ function ClientPortal() {
           </div>
         </header>
 
+        {/* Dedicated Password Creation Card when arriving via Email Link or Razorpay Redirect (?resetToken=...) */}
         <AnimatePresence>
-          {!isLoggedIn && (
+          {!isLoggedIn && resetToken && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="max-w-xl rounded-2xl border border-[var(--rule)] bg-[var(--paper)] p-6 md:p-10"
+            >
+              <p className="eyebrow text-[var(--signal)]">Account Activation</p>
+              <h2 className="mt-2 font-display text-3xl leading-tight text-[var(--ink)]">
+                Create your portal password.
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
+                Choose a strong password (at least 8 characters with letters and numbers). It will be encrypted and stored securely for your future sign-ins.
+              </p>
+
+              <form onSubmit={handleResetWithToken} className="mt-6 flex flex-col gap-4">
+                <label className="block">
+                  <span className={labelClass}>New password</span>
+                  <input
+                    type="password"
+                    required
+                    minLength={8}
+                    className={fieldClass}
+                    placeholder="8+ characters, letters and numbers"
+                    value={resetKey}
+                    onChange={(e) => setResetKey(e.target.value)}
+                  />
+                </label>
+
+                <label className="block">
+                  <span className={labelClass}>Confirm new password</span>
+                  <input
+                    type="password"
+                    required
+                    minLength={8}
+                    className={fieldClass}
+                    placeholder="Repeat your new password"
+                    value={resetConfirmKey}
+                    onChange={(e) => setResetConfirmKey(e.target.value)}
+                  />
+                </label>
+
+                {resetError && (
+                  <p className="rounded-lg border border-red-800/30 bg-red-950/20 px-4 py-3 text-sm text-red-900">
+                    {resetError}
+                  </p>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={resetLoading || resetKey.length < 8}
+                  className={`${buttonClass} mt-2 w-full`}
+                >
+                  {resetLoading ? 'Saving password & opening portal…' : 'Save password & open portal'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetToken('');
+                    try {
+                      window.history.replaceState({}, '', '/portal');
+                    } catch {}
+                  }}
+                  className={`${textButtonClass} mt-2 text-center`}
+                >
+                  Already have a password? Go to sign in
+                </button>
+              </form>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Standard Login Form */}
+        <AnimatePresence>
+          {!isLoggedIn && !resetToken && (
             <motion.div
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
@@ -530,6 +644,11 @@ function ClientPortal() {
                     {notice}
                   </p>
                 )}
+                {resetMsg && (
+                  <p className="rounded-lg border border-green-800/30 bg-green-950/10 px-4 py-3 text-sm text-green-800">
+                    {resetMsg}
+                  </p>
+                )}
                 {error && (
                   <p className="rounded-lg border border-red-800/30 bg-red-950/20 px-4 py-3 text-sm text-red-900">
                     {error}
@@ -553,7 +672,7 @@ function ClientPortal() {
                     onClick={() => setShowForgot(true)}
                     className={`${textButtonClass} justify-center`}
                   >
-                    Forgot your password?
+                    Forgot or need to set up your password?
                   </button>
                 )}
 
@@ -569,7 +688,7 @@ function ClientPortal() {
                       <div className="border-t border-[var(--rule)] pt-6">
                         <div className="flex items-start justify-between gap-4">
                           <p className="text-sm font-medium text-[var(--ink)]">
-                            Reset your password
+                            Send password setup / reset link
                           </p>
                           <button
                             type="button"
@@ -584,11 +703,10 @@ function ClientPortal() {
                           </button>
                         </div>
                         <p className="mt-1 text-xs text-[var(--ink-soft)]">
-                          Enter the email on file. If that email is registered, we will send a
-                          secure single-use reset link that expires in 15 minutes.
+                          Enter the email used during payment. We will send a single-use link to set your password.
                         </p>
 
-                        {!forgotMsg && !resetToken && (
+                        {!forgotMsg && (
                           <div className="mt-4">
                             <input
                               type="email"
@@ -599,26 +717,23 @@ function ClientPortal() {
                               value={forgotEmail}
                               onChange={(e) => setForgotEmail(e.target.value)}
                             />
-                            <div className="mt-4 flex gap-3">
+                            <div className="mt-4 flex flex-col gap-3">
                               <button
                                 type="button"
                                 onClick={handleForgotPassword}
                                 disabled={forgotLoading || !forgotEmail}
-                                className={`${secondaryButtonClass} flex-1`}
+                                className={`${secondaryButtonClass} w-full`}
                               >
-                                {forgotLoading ? 'Sending…' : 'Send reset link'}
+                                {forgotLoading ? 'Sending…' : 'Send setup / reset link'}
                               </button>
-                              {forgotMsg && (
-                                <p className="flex-1 text-sm text-green-700">{forgotMsg}</p>
-                              )}
                               {forgotError && (
-                                <p className="flex-1 text-sm text-red-700">{forgotError}</p>
+                                <p className="text-sm text-red-700">{forgotError}</p>
                               )}
                             </div>
                           </div>
                         )}
 
-                        {forgotMsg && !resetToken && !resetMsg && (
+                        {forgotMsg && (
                           <div className="mt-4 border-t border-[var(--rule)] pt-5">
                             <p className="text-sm text-green-700">{forgotMsg}</p>
                             <button
@@ -631,62 +746,6 @@ function ClientPortal() {
                               className={`${buttonClass} mt-4 w-full`}
                             >
                               Back
-                            </button>
-                          </div>
-                        )}
-
-                        {resetToken && !resetMsg && (
-                          <div className="mt-4 border-t border-[var(--rule)] pt-5">
-                            <p className="text-sm font-medium text-[var(--ink)]">
-                              Choose a new password
-                            </p>
-                            <p className="mt-1 text-xs text-[var(--ink-soft)]">
-                              This secure link works once and expires 15 minutes after it was
-                              requested.
-                            </p>
-                            <label className="mt-4 block">
-                              <span className={labelClass}>New password</span>
-                              <input
-                                type="password"
-                                required
-                                minLength={8}
-                                className={fieldClass}
-                                placeholder="8+ chars, letters and numbers"
-                                value={resetKey}
-                                onChange={(e) => setResetKey(e.target.value)}
-                              />
-                            </label>
-                            {resetError && (
-                              <p className="mt-3 text-sm text-red-700">{resetError}</p>
-                            )}
-                            <button
-                              type="button"
-                              onClick={handleResetWithToken}
-                              disabled={resetLoading || resetKey.length < 8}
-                              className={`${buttonClass} mt-4 w-full`}
-                            >
-                              {resetLoading ? 'Saving…' : 'Save new password'}
-                            </button>
-                          </div>
-                        )}
-
-                        {resetMsg && (
-                          <div className="mt-4 border-t border-[var(--rule)] pt-5">
-                            <p className="text-sm text-green-700">{resetMsg}</p>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setShowForgot(false);
-                                setForgotMsg('');
-                                setForgotEmail('');
-                                setForgotError('');
-                                setResetMsg('');
-                                setResetKey('');
-                                setResetError('');
-                              }}
-                              className={`${buttonClass} mt-4 w-full`}
-                            >
-                              Back to sign in
                             </button>
                           </div>
                         )}
@@ -718,11 +777,10 @@ function ClientPortal() {
           >
             <p className="eyebrow text-[var(--signal)]">First sign-in</p>
             <h2 className="mt-2 font-display text-3xl leading-tight text-[var(--ink)]">
-              Set a permanent password.
+              Create your permanent password.
             </h2>
             <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--ink-soft)]">
-              You signed in with the temporary password from your payment email. Choose a
-              password you will keep — at least 8 characters with a letter and a number.
+              Choose a password you will keep for future sign-ins — at least 8 characters with a letter and a number.
             </p>
             <form onSubmit={handleSetPassword} className="mt-6 flex max-w-md flex-col gap-4">
               <label className="block">
@@ -764,7 +822,15 @@ function ClientPortal() {
             <p className="eyebrow text-[var(--ink-soft)]">No project on file</p>
             <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
               Your account is active but no project is attached yet.{' '}
-              {SUPPORT_EMAIL ? <>Write to <a className="underline" href={emailHref(SUPPORT_EMAIL)}>{SUPPORT_EMAIL}</a> and we will link it.</> : <>Use the <a className="underline" href="/contact">contact form</a> and we will link it.</>}
+              {SUPPORT_EMAIL ? (
+                <>
+                  Write to <a className="underline" href={emailHref(SUPPORT_EMAIL)}>{SUPPORT_EMAIL}</a> and we will link it.
+                </>
+              ) : (
+                <>
+                  Use the <a className="underline" href="/contact">contact form</a> and we will link it.
+                </>
+              )}
             </p>
           </div>
         )}
@@ -778,7 +844,6 @@ function ClientPortal() {
               exit={{ opacity: 0 }}
               transition={{ duration: 0.2 }}
             >
-              {/* Project selector and the two portal views */}
               <div className="mb-8 flex flex-wrap items-center justify-between gap-4 border-b border-[var(--rule)] pb-4">
                 <div role="tablist" aria-label="Project sections" className="flex items-center gap-2">
                   <button
@@ -839,277 +904,277 @@ function ClientPortal() {
                   id="portal-overview-panel"
                   aria-labelledby="portal-overview-tab"
                 >
-              <div className="mb-10 grid grid-cols-1 gap-6 md:grid-cols-12 md:gap-x-8">
-                <div className="col-span-12 md:col-span-7">
-                  <p className="eyebrow text-[var(--ink-soft)]">Overview</p>
-                  <h2 className="mt-2 font-display text-3xl leading-tight text-[var(--ink)]">
-                    {projectData.projectTitle || 'Untitled project'}
-                  </h2>
-                  <p className="mt-2 text-sm text-[var(--ink-soft)]">
-                    Client: {projectData.clientName || session?.user?.name || '—'} ({session?.user?.email || 'on file'})
-                  </p>
-                  {projectData.projectType && (
-                    <p className="mt-3 text-sm text-[var(--ink-soft)]">
-                      Project type <span className="ml-2 font-medium text-[var(--ink)]">{projectData.projectType}</span>
-                    </p>
-                  )}
-                  {Array.isArray(projectData.features) && projectData.features.length > 0 && (
-                    <div className="mt-3 flex flex-wrap gap-2" aria-label="Included project features">
-                      {projectData.features.map((feature) => (
-                        <span key={`${projectData.id}:${feature}`} className="rounded-full border border-[var(--rule)] bg-[var(--paper)] px-3 py-1 text-xs text-[var(--ink-soft)]">{feature}</span>
-                      ))}
-                    </div>
-                  )}
-                  {projectData.invoiceNumber && (
-                    <div className="mt-4">
-                      <button type="button" onClick={handleDownloadInvoice} disabled={invoiceDownloading} className={`${secondaryButtonClass} disabled:cursor-wait disabled:opacity-50`}>
-                        {invoiceDownloading ? 'Preparing invoice PDF…' : 'Download Invoice & SOW (PDF) ↓'}
-                      </button>
-                      <p className="mt-2 text-xs text-[var(--ink-soft)]">Invoice {projectData.invoiceNumber}</p>
-                      {invoiceError && <p role="alert" className="mt-2 text-sm text-red-700">{invoiceError}</p>}
-                    </div>
-                  )}
-                </div>
-                <div className="col-span-12 md:col-span-5">
-                  <p className="eyebrow text-[var(--ink-soft)]">Status</p>
-                  <div className="mt-2 rounded-xl border border-[var(--rule)] bg-[var(--paper)] p-5">
-                    <dl className="grid grid-cols-2 gap-y-4 gap-x-4 text-sm">
-                      <div>
-                        <dt className="text-[var(--ink-soft)]">Progress</dt>
-                        <dd className="mt-1 font-medium text-[var(--ink)]">
-                          {projectData.progress || 0}%
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-[var(--ink-soft)]">Payment</dt>
-                        <dd className="mt-1 font-medium text-[var(--ink)]">
-                          {paymentStatusLabel(projectData.paymentStatus)}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-[var(--ink-soft)]">Total cost</dt>
-                        <dd className="mt-1 font-medium text-[var(--ink)]">
-                          {formatInr(projectData.totalCost)}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-[var(--ink-soft)]">Paid</dt>
-                        <dd className="mt-1 font-medium text-[var(--ink)]">
-                          {formatInr(projectData.amountPaid)}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-[var(--ink-soft)]">Balance due</dt>
-                        <dd className="mt-1 font-medium text-[var(--ink)]">
-                          {formatInr(projectData.balanceDue)}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-[var(--ink-soft)]">Delivery</dt>
-                        <dd className="mt-1 font-medium text-[var(--ink)]">
-                          {projectData.deliveryDate || 'To be agreed'}
-                        </dd>
-                      </div>
-                    </dl>
-                    {projectData.balanceDue > 0 && (
-                      <div className="mt-5 border-t border-[var(--rule)] pt-4">
-                        <p className="text-sm text-[var(--ink-soft)]">
-                          A remaining balance is still due to continue the project.
-                        </p>
-                        <button
-                          type="button"
-                          onClick={handlePayRemaining}
-                          className={`${buttonClass} mt-4`}
-                        >
-                          Pay remaining balance 
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div className="mb-10 grid grid-cols-1 gap-6 md:grid-cols-12 md:gap-x-8">
-                <div className="col-span-12 md:col-span-7">
-                  <p className="eyebrow text-[var(--ink-soft)]">Live progress</p>
-                  <div className="mt-4 rounded-xl border border-[var(--rule)] bg-[var(--paper)] p-5">
-                    <div className="flex items-center gap-4">
-                      <div
-                        className="h-3 w-full max-w-md overflow-hidden rounded-full bg-[var(--paper-2)]"
-                        role="progressbar"
-                        aria-label="Project progress"
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={Number(projectData.progress) || 0}
-                      >
-                        <div
-                          className="h-full rounded-full bg-[var(--signal)] transition-all duration-500 ease-out"
-                          style={{ width: `${projectData.progress || 0}%` }}
-                        />
-                      </div>
-                      <p className="shrink-0 font-mono-ui text-sm tabular-nums text-[var(--ink)]">
-                        {projectData.progress || 0}%
+                  <div className="mb-10 grid grid-cols-1 gap-6 md:grid-cols-12 md:gap-x-8">
+                    <div className="col-span-12 md:col-span-7">
+                      <p className="eyebrow text-[var(--ink-soft)]">Overview</p>
+                      <h2 className="mt-2 font-display text-3xl leading-tight text-[var(--ink)]">
+                        {projectData.projectTitle || 'Untitled project'}
+                      </h2>
+                      <p className="mt-2 text-sm text-[var(--ink-soft)]">
+                        Client: {projectData.clientName || session?.user?.name || '—'} ({session?.user?.email || 'on file'})
                       </p>
-                    </div>
-                    {projectData.notes && (
-                      <div className="mt-4 border-t border-[var(--rule)] pt-4">
-                        <p className="eyebrow text-[var(--ink-soft)]">Latest note</p>
-                        <p className="mt-2 max-w-2xl whitespace-pre-wrap text-base leading-7 text-[var(--ink)]">
-                          {projectData.notes}
+                      {projectData.projectType && (
+                        <p className="mt-3 text-sm text-[var(--ink-soft)]">
+                          Project type <span className="ml-2 font-medium text-[var(--ink)]">{projectData.projectType}</span>
                         </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="col-span-12 md:col-span-5">
-                  <p className="eyebrow text-[var(--ink-soft)]">Payments</p>
-                  <div className="mt-4 rounded-xl border border-[var(--rule)] bg-[var(--paper)] p-5">
-                    <p className="text-sm text-[var(--ink-soft)]">
-                      Payment history for this project.
-                    </p>
-                    <ul className="mt-4 space-y-3">
-                      <li className="rounded-lg border border-[var(--rule)] bg-[var(--paper-2)] p-4">
-                        <dl className="grid grid-cols-2 gap-2 text-sm">
+                      )}
+                      {Array.isArray(projectData.features) && projectData.features.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-2" aria-label="Included project features">
+                          {projectData.features.map((feature) => (
+                            <span key={`${projectData.id}:${feature}`} className="rounded-full border border-[var(--rule)] bg-[var(--paper)] px-3 py-1 text-xs text-[var(--ink-soft)]">{feature}</span>
+                          ))}
+                        </div>
+                      )}
+                      {projectData.invoiceNumber && (
+                        <div className="mt-4">
+                          <button type="button" onClick={handleDownloadInvoice} disabled={invoiceDownloading} className={`${secondaryButtonClass} disabled:cursor-wait disabled:opacity-50`}>
+                            {invoiceDownloading ? 'Preparing invoice PDF…' : 'Download Invoice & SOW (PDF) ↓'}
+                          </button>
+                          <p className="mt-2 text-xs text-[var(--ink-soft)]">Invoice {projectData.invoiceNumber}</p>
+                          {invoiceError && <p role="alert" className="mt-2 text-sm text-red-700">{invoiceError}</p>}
+                        </div>
+                      )}
+                    </div>
+                    <div className="col-span-12 md:col-span-5">
+                      <p className="eyebrow text-[var(--ink-soft)]">Status</p>
+                      <div className="mt-2 rounded-xl border border-[var(--rule)] bg-[var(--paper)] p-5">
+                        <dl className="grid grid-cols-2 gap-y-4 gap-x-4 text-sm">
                           <div>
-                            <dt className="text-[var(--ink-soft)]">Amount paid</dt>
-                            <dd className="font-medium text-[var(--ink)]">
+                            <dt className="text-[var(--ink-soft)]">Progress</dt>
+                            <dd className="mt-1 font-medium text-[var(--ink)]">
+                              {projectData.progress || 0}%
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-[var(--ink-soft)]">Payment</dt>
+                            <dd className="mt-1 font-medium text-[var(--ink)]">
+                              {paymentStatusLabel(projectData.paymentStatus)}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-[var(--ink-soft)]">Total cost</dt>
+                            <dd className="mt-1 font-medium text-[var(--ink)]">
+                              {formatInr(projectData.totalCost)}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="text-[var(--ink-soft)]">Paid</dt>
+                            <dd className="mt-1 font-medium text-[var(--ink)]">
                               {formatInr(projectData.amountPaid)}
                             </dd>
                           </div>
                           <div>
-                            <dt className="text-[var(--ink-soft)]">Balance</dt>
-                            <dd className="font-medium text-[var(--ink)]">
+                            <dt className="text-[var(--ink-soft)]">Balance due</dt>
+                            <dd className="mt-1 font-medium text-[var(--ink)]">
                               {formatInr(projectData.balanceDue)}
                             </dd>
                           </div>
+                          <div>
+                            <dt className="text-[var(--ink-soft)]">Delivery</dt>
+                            <dd className="mt-1 font-medium text-[var(--ink)]">
+                              {projectData.deliveryDate || 'To be agreed'}
+                            </dd>
+                          </div>
                         </dl>
-                      </li>
-                    </ul>
-
-                  </div>
-                </div>
-              </div>
-
-              <div className="mb-10 grid grid-cols-1 gap-6 md:grid-cols-12 md:gap-x-8">
-                <div className="col-span-12 md:col-span-7">
-                  <p className="eyebrow text-[var(--ink-soft)]">Delivery</p>
-                  <div className="mt-4 rounded-xl border border-[var(--rule)] bg-[var(--paper)] p-6">
-                    <p className="text-sm text-[var(--ink-soft)]">
-                      The agreed hand-over date for this project.
-                    </p>
-                    <p className="mt-3 font-display text-2xl text-[var(--ink)]">
-                      {projectData.deliveryDate || 'To be agreed'}
-                    </p>
-                    <p className="mt-2 text-sm text-[var(--ink-soft)]">
-                      Dates are estimates and move with feedback and scope. Any change is
-                      posted in the note below.
-                    </p>
-                  </div>
-                </div>
-                <div className="col-span-12 md:col-span-5">
-                  <p className="eyebrow text-[var(--ink-soft)]">Inside the portal</p>
-                  <ul className="mt-4 border-t border-[var(--rule)] text-sm">
-                    {[
-                      ['01', 'Live progress', 'Where the build stands right now.'],
-                      ['02', 'Payments', 'What is settled and what remains due.'],
-                      ['03', 'Delivery', 'The agreed hand-over date.'],
-                      ['04', 'Messages', 'A direct line to the developer.'],
-                    ].map(([index, title, description]) => (
-                      <li
-                        key={index}
-                        className="flex gap-5 border-b border-[var(--rule)] py-2.5"
-                      >
-                        <span className="font-mono-ui text-[10px] tracking-[0.14em] text-[var(--signal)]">
-                          {index}
-                        </span>
-                        <div>
-                          <p className="text-[var(--ink)]">{title}</p>
-                          <p className="mt-0.5 text-[var(--ink-soft)]">{description}</p>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-
-              <section className="pb-10">
-                <div className="flex flex-wrap items-baseline justify-between gap-3">
-                  <p className="eyebrow text-[var(--signal)]">Messages</p>
-                  <p className="eyebrow text-[var(--ink-soft)]">Project thread</p>
-                </div>
-
-                <p className="mt-4 max-w-3xl whitespace-pre-wrap text-lg leading-8 text-[var(--ink)]">
-                  {projectData.notes ||
-                    'No new updates right now. Working on your project!'}
-                </p>
-
-                <div className="mt-8 border-t border-[var(--rule)] pt-6">
-                  <p className="eyebrow text-[var(--ink-soft)]">Conversation</p>
-                  {messagesLoading && (
-                    <p className="mt-3 text-sm text-[var(--ink-soft)]">Loading messages…</p>
-                  )}
-                  {messagesError && (
-                    <p className="mt-3 text-sm text-red-700">{messagesError}</p>
-                  )}
-                  {!messagesLoading && !messagesError && messages.length === 0 && (
-                    <p className="mt-3 text-sm text-[var(--ink-soft)]">
-                      No messages yet. Send the first one below.
-                    </p>
-                  )}
-                  <ul className="mt-4 space-y-3">
-                    {messages.map((msg) => {
-                      const fromClient = msg.senderType === 'client';
-                      return (
-                        <li
-                          key={msg.id}
-                          className={`rounded-lg border border-[var(--rule)] p-4 ${fromClient ? 'bg-[var(--paper)]' : 'bg-[var(--paper-2)]'}`}
-                        >
-                          <div className="flex flex-wrap items-baseline justify-between gap-2">
-                            <p className="text-sm font-medium text-[var(--ink)]">
-                              {fromClient ? 'You' : msg.senderName || 'Shivam (developer)'}
+                        {projectData.balanceDue > 0 && (
+                          <div className="mt-5 border-t border-[var(--rule)] pt-4">
+                            <p className="text-sm text-[var(--ink-soft)]">
+                              A remaining balance is still due to continue the project.
                             </p>
-                            <p className="font-mono-ui text-[10px] uppercase tracking-[0.12em] text-[var(--ink-soft)]">
-                              {new Date(msg.createdAt).toLocaleString()}
+                            <button
+                              type="button"
+                              onClick={handlePayRemaining}
+                              className={`${buttonClass} mt-4`}
+                            >
+                              Pay remaining balance 
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mb-10 grid grid-cols-1 gap-6 md:grid-cols-12 md:gap-x-8">
+                    <div className="col-span-12 md:col-span-7">
+                      <p className="eyebrow text-[var(--ink-soft)]">Live progress</p>
+                      <div className="mt-4 rounded-xl border border-[var(--rule)] bg-[var(--paper)] p-5">
+                        <div className="flex items-center gap-4">
+                          <div
+                            className="h-3 w-full max-w-md overflow-hidden rounded-full bg-[var(--paper-2)]"
+                            role="progressbar"
+                            aria-label="Project progress"
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={Number(projectData.progress) || 0}
+                          >
+                            <div
+                              className="h-full rounded-full bg-[var(--signal)] transition-all duration-500 ease-out"
+                              style={{ width: `${projectData.progress || 0}%` }}
+                            />
+                          </div>
+                          <p className="shrink-0 font-mono-ui text-sm tabular-nums text-[var(--ink)]">
+                            {projectData.progress || 0}%
+                          </p>
+                        </div>
+                        {projectData.notes && (
+                          <div className="mt-4 border-t border-[var(--rule)] pt-4">
+                            <p className="eyebrow text-[var(--ink-soft)]">Latest note</p>
+                            <p className="mt-2 max-w-2xl whitespace-pre-wrap text-base leading-7 text-[var(--ink)]">
+                              {projectData.notes}
                             </p>
                           </div>
-                          {msg.subject && (
-                            <p className="mt-1 text-sm font-medium text-[var(--ink)]">
-                              {msg.subject}
-                            </p>
-                          )}
-                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--ink-soft)]">
-                            {msg.body}
-                          </p>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="col-span-12 md:col-span-5">
+                      <p className="eyebrow text-[var(--ink-soft)]">Payments</p>
+                      <div className="mt-4 rounded-xl border border-[var(--rule)] bg-[var(--paper)] p-5">
+                        <p className="text-sm text-[var(--ink-soft)]">
+                          Payment history for this project.
+                        </p>
+                        <ul className="mt-4 space-y-3">
+                          <li className="rounded-lg border border-[var(--rule)] bg-[var(--paper-2)] p-4">
+                            <dl className="grid grid-cols-2 gap-2 text-sm">
+                              <div>
+                                <dt className="text-[var(--ink-soft)]">Amount paid</dt>
+                                <dd className="font-medium text-[var(--ink)]">
+                                  {formatInr(projectData.amountPaid)}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt className="text-[var(--ink-soft)]">Balance</dt>
+                                <dd className="font-medium text-[var(--ink)]">
+                                  {formatInr(projectData.balanceDue)}
+                                </dd>
+                              </div>
+                            </dl>
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
 
-                <form
-                  onSubmit={handleSendReply}
-                  className="mt-8 max-w-2xl border-t border-[var(--rule)] pt-6"
-                >
-                  <label className="block">
-                    <span className={labelClass}>Message the developer</span>
-                    <textarea
-                      rows="4"
-                      placeholder="Feedback, a question, or a change request…"
-                      value={clientReply}
-                      onChange={(e) => setClientReply(e.target.value)}
-                      className={`${fieldClass} resize-y`}
-                      required
-                    />
-                  </label>
-                  <button
-                    type="submit"
-                    disabled={isSendingReply}
-                    className={`${buttonClass} mt-4`}
-                  >
-                    {isSendingReply ? 'Sending…' : 'Send message '}
-                  </button>
-                </form>
-              </section>
+                  <div className="mb-10 grid grid-cols-1 gap-6 md:grid-cols-12 md:gap-x-8">
+                    <div className="col-span-12 md:col-span-7">
+                      <p className="eyebrow text-[var(--ink-soft)]">Delivery</p>
+                      <div className="mt-4 rounded-xl border border-[var(--rule)] bg-[var(--paper)] p-6">
+                        <p className="text-sm text-[var(--ink-soft)]">
+                          The agreed hand-over date for this project.
+                        </p>
+                        <p className="mt-3 font-display text-2xl text-[var(--ink)]">
+                          {projectData.deliveryDate || 'To be agreed'}
+                        </p>
+                        <p className="mt-2 text-sm text-[var(--ink-soft)]">
+                          Dates are estimates and move with feedback and scope. Any change is
+                          posted in the note below.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="col-span-12 md:col-span-5">
+                      <p className="eyebrow text-[var(--ink-soft)]">Inside the portal</p>
+                      <ul className="mt-4 border-t border-[var(--rule)] text-sm">
+                        {[
+                          ['01', 'Live progress', 'Where the build stands right now.'],
+                          ['02', 'Payments', 'What is settled and what remains due.'],
+                          ['03', 'Delivery', 'The agreed hand-over date.'],
+                          ['04', 'Messages', 'A direct line to the developer.'],
+                        ].map(([index, title, description]) => (
+                          <li
+                            key={index}
+                            className="flex gap-5 border-b border-[var(--rule)] py-2.5"
+                          >
+                            <span className="font-mono-ui text-[10px] tracking-[0.14em] text-[var(--signal)]">
+                              {index}
+                            </span>
+                            <div>
+                              <p className="text-[var(--ink)]">{title}</p>
+                              <p className="mt-0.5 text-[var(--ink-soft)]">{description}</p>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+
+                  <section className="pb-10">
+                    <div className="flex flex-wrap items-baseline justify-between gap-3">
+                      <p className="eyebrow text-[var(--signal)]">Messages</p>
+                      <p className="eyebrow text-[var(--ink-soft)]">Project thread</p>
+                    </div>
+
+                    <p className="mt-4 max-w-3xl whitespace-pre-wrap text-lg leading-8 text-[var(--ink)]">
+                      {projectData.notes ||
+                        'No new updates right now. Working on your project!'}
+                    </p>
+
+                    <div className="mt-8 border-t border-[var(--rule)] pt-6">
+                      <p className="eyebrow text-[var(--ink-soft)]">Conversation</p>
+                      {messagesLoading && (
+                        <p className="mt-3 text-sm text-[var(--ink-soft)]">Loading messages…</p>
+                      )}
+                      {messagesError && (
+                        <p className="mt-3 text-sm text-red-700">{messagesError}</p>
+                      )}
+                      {!messagesLoading && !messagesError && messages.length === 0 && (
+                        <p className="mt-3 text-sm text-[var(--ink-soft)]">
+                          No messages yet. Send the first one below.
+                        </p>
+                      )}
+                      <ul className="mt-4 space-y-3">
+                        {messages.map((msg) => {
+                          const fromClient = msg.senderType === 'client';
+                          return (
+                            <li
+                              key={msg.id}
+                              className={`rounded-lg border border-[var(--rule)] p-4 ${fromClient ? 'bg-[var(--paper)]' : 'bg-[var(--paper-2)]'}`}
+                            >
+                              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                                <p className="text-sm font-medium text-[var(--ink)]">
+                                  {fromClient ? 'You' : msg.senderName || 'Shivam (developer)'}
+                                </p>
+                                <p className="font-mono-ui text-[10px] uppercase tracking-[0.12em] text-[var(--ink-soft)]">
+                                  {new Date(msg.createdAt).toLocaleString()}
+                                </p>
+                              </div>
+                              {msg.subject && (
+                                <p className="mt-1 text-sm font-medium text-[var(--ink)]">
+                                  {msg.subject}
+                                </p>
+                              )}
+                              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--ink-soft)]">
+                                {msg.body}
+                              </p>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+
+                    <form
+                      onSubmit={handleSendReply}
+                      className="mt-8 max-w-2xl border-t border-[var(--rule)] pt-6"
+                    >
+                      <label className="block">
+                        <span className={labelClass}>Message the developer</span>
+                        <textarea
+                          rows="4"
+                          maxLength={4000}
+                          placeholder="Feedback, a question, or a change request…"
+                          value={clientReply}
+                          onChange={(e) => setClientReply(e.target.value)}
+                          className={`${fieldClass} resize-y`}
+                          required
+                        />
+                      </label>
+                      <button
+                        type="submit"
+                        disabled={isSendingReply}
+                        className={`${buttonClass} mt-4`}
+                      >
+                        {isSendingReply ? 'Sending…' : 'Send message '}
+                      </button>
+                    </form>
+                  </section>
                 </div>
               )}
             </motion.div>
@@ -1148,7 +1213,7 @@ function ClientPortal() {
                   id="welcome-back-title"
                   className="mt-2 font-display text-2xl leading-tight text-[var(--ink)]"
                 >
-                  Welcome back, {session?.user?.name || 'there'}.
+                  Welcome, {session?.user?.name || 'there'}.
                 </h2>
                 <p className="mt-3 text-sm leading-6 text-[var(--ink-soft)]">
                   You have{' '}

@@ -3,15 +3,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation, useNavigate } from 'react-router-dom';
 import RefundRules from './RefundRules';
 import { PageShell, buttonClass } from '../components/Editorial';
+import { apiRequest, apiUrl, portalSession } from '../lib/api';
+import { SUPPORT_EMAIL } from '../lib/contact';
+import { PayPalScriptProvider, PayPalButtons } from '@paypal/react-paypal-js';
+import { QRCodeSVG } from 'qrcode.react';
 
 const primaryButtonClass = `${buttonClass} bg-[var(--ink)] text-[var(--paper)] hover:bg-[var(--signal)] hover:text-white hover:border-[var(--signal)]`;
 
 const secondaryButtonClass =
   'inline-flex items-center justify-center gap-2 border border-[var(--ink)] px-5 py-3 font-mono-ui text-label uppercase tracking-[0.16em] text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--signal)]';
-import { apiRequest, apiUrl } from '../lib/api';
-import { SUPPORT_EMAIL } from '../lib/contact';
-import { PayPalScriptProvider, PayPalButtons } from '@paypal/react-paypal-js';
-import { QRCodeSVG } from 'qrcode.react';
 
 const INR_PER_USD = Number(import.meta.env.VITE_INR_PER_USD) || 88;
 const UPI_ID = String(import.meta.env.VITE_UPI_ID || '').trim();
@@ -27,6 +27,45 @@ const formatUsd = (value) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+
+// Security Helper: Blocks XSS, NoSQLi, and Prompt Injection payloads in form inputs
+const UNSAFE_INPUT_REGEX = /<script[\s>]|javascript:|onerror\s*=|onload\s*=|\$where|\$ne|\$gt|\$lt|\$regex|ignore\s+(all\s+)?(previous|prior|system)\s+instructions/i;
+
+function sanitizeText(value, maxLen = 150) {
+  return String(value ?? '')
+    .replace(/[\x00-\x1F\x7F<>]/g, '')
+    .trim()
+    .slice(0, maxLen);
+}
+
+// Security Helper: Verifies genuine PNG, JPEG, or WebP binary magic bytes before upload
+async function isGenuineImageFile(file) {
+  const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+  if (!allowedTypes.includes(file.type)) return false;
+
+  const slice = file.slice(0, 12);
+  const buffer = await slice.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  if (bytes.length < 12) return false;
+
+  const isPng =
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47;
+  const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  const isWebp =
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50;
+
+  return isPng || isJpeg || isWebp;
+}
 
 const Payment = () => {
   const location = useLocation();
@@ -112,19 +151,23 @@ const Payment = () => {
   const handleProceedToPay = (e) => {
     e.preventDefault();
 
-    const clientName = clientDetails.name.trim();
-    const clientEmail = clientDetails.email.trim();
-    const clientPhone = clientDetails.phone.trim();
+    const clientName = sanitizeText(clientDetails.name, 120);
+    const clientEmail = clientDetails.email.trim().toLowerCase();
+    const clientPhone = clientDetails.phone.replace(/[^0-9+\-\s()]/g, '').trim();
 
     if (!clientName || !clientEmail || !clientPhone) {
       alert('Error: All fields in Step 1 are mandatory!');
       return;
     }
-    if (!clientEmail.includes('@') || !clientEmail.includes('.')) {
+    if (UNSAFE_INPUT_REGEX.test(clientName) || UNSAFE_INPUT_REGEX.test(clientEmail)) {
+      alert('Error: Invalid characters detected.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(clientEmail)) {
       alert('Error: Please enter a valid email address!');
       return;
     }
-    if (clientPhone.length < 10) {
+    if (clientPhone.replace(/\D/g, '').length < 10) {
       alert('Error: Please enter a valid 10-digit mobile number!');
       return;
     }
@@ -173,17 +216,18 @@ const Payment = () => {
     const formElement = e.target;
     const formData = new FormData(formElement);
     const imageFile = formData.get('attachment');
-    const transactionRef = String(formData.get('transaction_id') || '').trim();
+    const rawTransactionRef = String(formData.get('transaction_id') || '').trim();
 
-    const clientName = String(clientDetails.name || '').trim();
+    const clientName = sanitizeText(clientDetails.name, 120);
+    const transactionRef = sanitizeText(rawTransactionRef, 80);
     const amount = Number(amountToPay);
 
-    if (!clientName.trim()) {
+    if (!clientName) {
       setVerifyStatus('Please enter the client name.');
       return;
     }
-    if (!transactionRef.trim()) {
-      setVerifyStatus('Please enter the transaction ID / UTR.');
+    if (!transactionRef || !/^[A-Za-z0-9\-_./#]+$/.test(transactionRef)) {
+      setVerifyStatus('Please enter a valid alphanumeric Transaction ID / UTR.');
       return;
     }
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -192,19 +236,25 @@ const Payment = () => {
     }
     if (isVerifySubmitting) return;
     setIsVerifySubmitting(true);
-    setVerifyStatus('Reading your payment proof…');
+    setVerifyStatus('Verifying and reading your payment proof…');
 
     let screenshotUrl;
     if (imageFile && imageFile.size > 0) {
       if (imageFile.size > 3 * 1024 * 1024) {
-        setVerifyStatus('Screenshot must be smaller than 3MB.');
+        setVerifyStatus('Error: Screenshot must be smaller than 3MB.');
+        setIsVerifySubmitting(false);
+        return;
+      }
+      const isValidBinaryImage = await isGenuineImageFile(imageFile);
+      if (!isValidBinaryImage) {
+        setVerifyStatus('Error: Invalid file format. Only genuine PNG, JPG, or WebP images are allowed.');
         setIsVerifySubmitting(false);
         return;
       }
       try {
         screenshotUrl = await convertToBase64(imageFile);
       } catch {
-        setVerifyStatus('Could not read the screenshot. Try another image.');
+        setVerifyStatus('Error: Could not read the screenshot. Try another image.');
         setIsVerifySubmitting(false);
         return;
       }
@@ -230,7 +280,7 @@ const Payment = () => {
       });
 
       setVerifyStatus(
-        'Payment proof submitted! We will verify within 1-2 hours and send your portal login credentials via email.'
+        'Payment proof submitted! Once verified, we will email you a secure link to create your portal password.'
       );
       formElement.reset();
     } catch (err) {
@@ -244,6 +294,7 @@ const Payment = () => {
 
   const loadRazorpayScript = () => {
     return new Promise((resolve) => {
+      if (typeof window.Razorpay === 'function') return resolve(true);
       const script = document.createElement('script');
       script.src = 'https://checkout.razorpay.com/v1/checkout.js';
       script.onload = () => resolve(true);
@@ -252,14 +303,26 @@ const Payment = () => {
     });
   };
 
-  const waitForProvisioning = (message) => {
+  const redirectAfterGatewaySuccess = (data) => {
     setVerificationPending(true);
-    setPaymentStatusMessage(message);
+    setPaymentStatusMessage('Payment verified! Redirecting you to set up your portal password…');
+
+    if (data?.token) {
+      portalSession.save(data.token, data.userEmail || clientDetails.email);
+    }
+
+    const targetUrl = data?.redirectUrl
+      || (data?.setupToken ? `/portal?resetToken=${encodeURIComponent(data.setupToken)}` : '/portal');
+
     window.setTimeout(() => {
-      navigate('/portal', {
-        state: { email: clientDetails.email, paymentSubmitted: true },
+      navigate(targetUrl, {
+        state: {
+          email: data?.userEmail || clientDetails.email,
+          paymentSubmitted: true,
+          mustCreatePassword: true,
+        },
       });
-    }, 6000);
+    }, 1200);
   };
 
   const handleRazorpayPayment = async () => {
@@ -282,7 +345,7 @@ const Payment = () => {
       serviceName: clientDetails.service,
       projectId: clientDetails.projectId,
       isRemainingPayment: isRemainingPayment,
-                  name: clientDetails.name,
+      name: clientDetails.name,
       email: clientDetails.email,
     };
 
@@ -321,7 +384,7 @@ const Payment = () => {
           : clientDetails.service,
         order_id: orderData.order.id,
         handler: async function (response) {
-                                        setPaymentStatusMessage('Verifying your payment with Razorpay…');
+          setPaymentStatusMessage('Verifying your payment with Razorpay…');
 
           try {
             const verifyRes = await fetch(apiUrl('/api/payment/razorpay-verify'), {
@@ -343,11 +406,7 @@ const Payment = () => {
               return;
             }
 
-            waitForProvisioning(
-              data.emailSent
-                ? `Payment verified. Your portal login has been emailed to ${data.userEmail || clientDetails.email}.`
-                : `Payment verified for ${data.userEmail || clientDetails.email}. The credentials email could not be sent — write to support${SUPPORT_EMAIL ? ` at ${SUPPORT_EMAIL}` : ''} and we will send your login manually.`
-            );
+            redirectAfterGatewaySuccess(data);
           } catch (err) {
             setPaymentStatusMessage(
               `Payment received, but confirmation failed (${err.message}). Contact support${SUPPORT_EMAIL ? ` at ${SUPPORT_EMAIL}` : ''} with your payment ID.`
@@ -436,6 +495,7 @@ const Payment = () => {
                 <input
                   type="text"
                   required
+                  maxLength={120}
                   className={fieldClass}
                   value={clientDetails.name}
                   onChange={(e) =>
@@ -452,6 +512,7 @@ const Payment = () => {
                 <input
                   type="email"
                   required
+                  maxLength={160}
                   className={fieldClass}
                   value={clientDetails.email}
                   onChange={(e) =>
@@ -468,6 +529,7 @@ const Payment = () => {
                 <input
                   type="tel"
                   required
+                  maxLength={20}
                   className={fieldClass}
                   value={clientDetails.phone}
                   onChange={(e) =>
@@ -546,28 +608,17 @@ const Payment = () => {
 
             {verificationPending && (
               <div className="mt-6 border border-[var(--rule)] bg-[var(--paper-2)] p-6">
-                <p className="eyebrow text-[var(--signal)]">Payment received</p>
+                <p className="eyebrow text-[var(--signal)]">Payment verified</p>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--ink)]">
                   {paymentStatusMessage}
                 </p>
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--ink-soft)]">
-                  We verify the payment on the server and email your portal password to{' '}
+                  Taking you to the Client Portal to create your permanent password for{' '}
                   <strong className="font-medium text-[var(--ink)]">
-                    {clientDetails.email || 'your address'}
+                    {clientDetails.email || 'your account'}
                   </strong>
-                  . You will be taken to the portal sign-in shortly.
+                  …
                 </p>
-                <button
-                  type="button"
-                  onClick={() =>
-                    navigate('/portal', {
-                      state: { email: clientDetails.email, paymentSubmitted: true },
-                    })
-                  }
-                  className={`${primaryButtonClass} mt-4`}
-                >
-                  Go to portal sign-in
-                </button>
               </div>
             )}
 
@@ -675,9 +726,9 @@ const Payment = () => {
 
                 <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
                   <div className="flex h-full flex-col border border-[var(--rule)] p-6">
-                    <p className="eyebrow text-[var(--ink-soft)]">Cards</p>
+                    <p className="eyebrow text-[var(--ink-soft)]">Cards & UPI (Instant Access)</p>
                     <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
-                      Secured by Razorpay. Cards, UPI and netbanking supported.
+                      Secured by Razorpay. Redirects directly to create your portal password.
                     </p>
                     <div className="mt-auto pt-4">
                       <button
@@ -742,7 +793,7 @@ const Payment = () => {
                           onApprove={async (data) => {
                             setPaymentStatusMessage('Verifying and capturing your PayPal payment…');
                             try {
-                              await apiRequest('/api/payment/paypal-verify', {
+                              const verifyData = await apiRequest('/api/payment/paypal-verify', {
                                 method: 'POST',
                                 body: {
                                   orderID: data.orderID,
@@ -754,9 +805,7 @@ const Payment = () => {
                                   isRemainingPayment,
                                 },
                               });
-                                                                                          waitForProvisioning(
-                                'Payment received. Verifying and preparing your portal access…'
-                              );
+                              redirectAfterGatewaySuccess(verifyData);
                             } catch {
                               setVerificationPending(false);
                               setPaymentStatusMessage(
@@ -784,8 +833,8 @@ const Payment = () => {
                     Submit the transaction.
                   </h2>
                   <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
-                    Upload the payment screenshot so the transfer can be confirmed and access
-                    issued.
+                    Upload the payment screenshot so the transfer can be confirmed and a
+                    password creation link emailed to you.
                   </p>
 
                   <form
@@ -799,6 +848,7 @@ const Payment = () => {
                       <input
                         type="text"
                         name="client_name"
+                        maxLength={120}
                         value={clientDetails.name}
                         onChange={(e) => setClientDetails((current) => ({ ...current, name: e.target.value }))}
                         placeholder="e.g. Raghav Sharma"
@@ -830,7 +880,8 @@ const Payment = () => {
                       <input
                         type="text"
                         name="transaction_id"
-                        placeholder="e.g. 1234567890"
+                        maxLength={80}
+                        placeholder="e.g. 123456789012"
                         required
                         className={fieldClass}
                       />
@@ -838,12 +889,12 @@ const Payment = () => {
 
                     <label className="block">
                       <span className="eyebrow mb-2 block text-[var(--ink-soft)]">
-                        Screenshot — JPG or PNG, max 3MB
+                        Screenshot — JPG, PNG or WebP, max 3MB
                       </span>
                       <input
                         type="file"
                         name="attachment"
-                        accept="image/png, image/jpeg"
+                        accept="image/png, image/jpeg, image/webp"
                         required
                         className={`${fieldClass} cursor-pointer file:mr-3 file:border-0 file:bg-[var(--ink)] file:px-3 file:py-1.5 file:font-mono-ui file:text-[10px] file:uppercase file:tracking-[0.14em] file:text-[var(--paper)]`}
                       />
@@ -860,7 +911,7 @@ const Payment = () => {
                     {verifyStatus && (
                       <p
                         className={`border-l-2 pl-3 text-sm leading-6 ${
-                          /error|rejected|failed|offline/i.test(verifyStatus)
+                          /error|rejected|failed|offline|invalid/i.test(verifyStatus)
                             ? 'border-[var(--signal)] text-[var(--signal)]'
                             : 'border-[var(--ink)] text-[var(--ink)]'
                         }`}

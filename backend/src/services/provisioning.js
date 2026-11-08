@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { prisma } from '../lib/prisma.js';
 import { ValidationError, validateEmail } from './validators.js';
 import {
@@ -6,13 +7,19 @@ import {
   issueSession,
   TEMP_PASSWORD_TTL_MINUTES,
 } from './auth.service.js';
-import { getSupportEmail, sendCredentialsEmail, sendEmail, portalUrl } from './email.service.js';
+import { getSupportEmail, sendEmail, portalUrl } from './email.service.js';
 import { createAlert } from './notifications.js';
 import { escapeHtml } from '../lib/security.js';
 import { recordAudit, AUDIT_ACTIONS } from '../lib/audit.js';
 
+const SETUP_LINK_TTL_MINUTES = 72 * 60; // 72 hours
+
 function addMinutes(minutes) {
   return new Date(Date.now() + minutes * 60 * 1000);
+}
+
+function sha256Hex(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('hex');
 }
 
 function paymentStatusFor(totalCost, amountPaid) {
@@ -32,10 +39,15 @@ export async function issueTemporaryCredentials(user, {
   loginUrl,
   disconnectClientSockets = () => {},
   syncClientProjectCredentials = async () => {},
-  sendEmail = true,
+  sendEmail: shouldSendEmail = true,
 } = {}) {
   const temporaryPassword = generateTemporaryPassword();
   const tempPasswordHash = await hashSecret(temporaryPassword);
+
+  // Also issue a single-use 72-hour setup token so the user can set a password via 1-click link or redirect
+  const setupToken = crypto.randomBytes(32).toString('hex');
+  const setupTokenHash = `sha256:${sha256Hex(setupToken)}`;
+  const setupTokenExpiry = addMinutes(SETUP_LINK_TTL_MINUTES);
 
   const updated = await prisma.user.update({
     where: { id: user.id },
@@ -46,8 +58,8 @@ export async function issueTemporaryCredentials(user, {
       tempPasswordExpiry: addMinutes(TEMP_PASSWORD_TTL_MINUTES),
       tempPasswordAttempts: 0,
       mustChangePassword: true,
-      resetOtpHash: null,
-      resetOtpExpiry: null,
+      resetOtpHash: setupTokenHash,
+      resetOtpExpiry: setupTokenExpiry,
       resetOtpAttempts: 0,
       sessionToken: null,
       sessionTokenExpiry: null,
@@ -65,28 +77,44 @@ export async function issueTemporaryCredentials(user, {
   });
   disconnectClientSockets(updated.id);
 
+  const magicSetupUrl = loginUrl ?? `${portalUrl('/portal')}?resetToken=${encodeURIComponent(setupToken)}`;
+
   let emailSent = false;
   let manualRequired = false;
   try {
-    if (!sendEmail) {
+    if (!shouldSendEmail) {
       return {
         user: updated,
         temporaryPassword,
         manualPasscode: temporaryPassword,
+        setupToken,
+        setupUrl: magicSetupUrl,
         emailSent: false,
         manualRequired: false,
       };
     }
-    const dispatchResult = await sendCredentialsEmail({
+
+    const dispatchResult = await sendEmail({
       to: updated.email,
-      recipientName: updated.name ?? 'there',
-      temporaryPassword,
-      loginUrl: loginUrl ?? `${portalUrl('/portal')}?email=${encodeURIComponent(updated.email)}`,
+      subject: `Welcome to Your Client Portal${projectTitle ? ` — ${projectTitle}` : ''}`,
+      html: `<div style="font-family:Arial,Helvetica,sans-serif;line-height:1.6;color:#17140f;max-width:560px;margin:auto;padding:24px;border:1px solid #e6dfd3;border-radius:8px;">
+        <p style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#c93d1b">Shivam Web Studio · rshivam.dev</p>
+        <h2 style="font-family:Georgia,serif;font-weight:400;margin-top:4px;">Your project portal is ready</h2>
+        <p>Hello <strong>${escapeHtml(updated.name || 'there')}</strong>,</p>
+        <p>Your payment has been verified${projectTitle ? ` for <strong>${escapeHtml(projectTitle)}</strong>` : ''}. Click the button below to create your permanent password and open your live project dashboard:</p>
+        <p style="margin:24px 0;">
+          <a href="${escapeHtml(magicSetupUrl)}" style="display:inline-block;background:#17140f;color:#faf6ee;padding:12px 24px;text-decoration:none;border-radius:6px;font-weight:bold;">Create Password &amp; Open Portal</a>
+        </p>
+        <p style="font-size:12px;color:#71695d;">This setup link is valid for 72 hours and can be used once.</p>
+      </div>`,
+      text: `Hello ${updated.name || 'there'},\n\nYour payment has been verified${projectTitle ? ` for ${projectTitle}` : ''}.\n\nClick the link below to create your password and access your Client Portal:\n${magicSetupUrl}\n\nValid for 72 hours.`,
+      replyTo: getSupportEmail(),
     });
     emailSent = Boolean(dispatchResult?.success && !dispatchResult?.manualRequired);
-    manualRequired = Boolean(dispatchResult?.manualRequired);
+    manualRequired = Boolean(dispatchResult?.manualRequired || !emailSent);
   } catch (err) {
     console.error('[provisioning] credentials email failed:', err?.message ?? err);
+    manualRequired = true;
   }
 
   if (manualRequired) {
@@ -103,6 +131,8 @@ export async function issueTemporaryCredentials(user, {
     user: updated,
     temporaryPassword,
     manualPasscode: temporaryPassword,
+    setupToken,
+    setupUrl: magicSetupUrl,
     emailSent,
     manualRequired,
   };
@@ -132,16 +162,43 @@ export async function provisionFromPayment(input, {
         orderBy: { createdAt: 'desc' },
       });
     }
-    
-    // Yahan fix hai: Agar testing me project delete ho gaya tha, toh ise duplicate na maane aur aage badhne de!
+
     if (linkedProject) {
       const existingUser = existing.userId
         ? await prisma.user.findUnique({ where: { id: existing.userId } })
         : await prisma.user.findUnique({ where: { email } });
-      return { duplicate: true, payment: existing, project: linkedProject, user: existingUser, token: null };
+
+      let setupToken = null;
+      let session = null;
+      const needsPasswordSetup = Boolean(existingUser && (!existingUser.passwordHash || existingUser.mustChangePassword));
+      if (existingUser && needsPasswordSetup) {
+        setupToken = crypto.randomBytes(32).toString('hex');
+        const tokenHash = `sha256:${sha256Hex(setupToken)}`;
+        await prisma.user.update({
+          where: { id: existingUser.id },
+          data: {
+            resetOtpHash: tokenHash,
+            resetOtpExpiry: addMinutes(SETUP_LINK_TTL_MINUTES),
+            resetOtpAttempts: 0,
+            mustChangePassword: true,
+          },
+        });
+        try {
+          session = await issueSession(prisma, existingUser);
+        } catch {}
+      }
+
+      return {
+        duplicate: true,
+        payment: existing,
+        project: linkedProject,
+        user: existingUser,
+        token: session?.token ?? null,
+        setupToken,
+        mustChangePassword: needsPasswordSetup,
+      };
     }
   }
-
 
   const amount = Number(input.amount ?? 0);
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -174,7 +231,6 @@ export async function provisionFromPayment(input, {
       ? await prisma.clientProject.findUnique({ where: { id: input.projectId } })
       : null;
 
-    // Fallback: Find latest project with pending balance for this email
     if (!target) {
       target = await prisma.clientProject.findFirst({
         where: {
@@ -223,7 +279,7 @@ export async function provisionFromPayment(input, {
         lastUpdated: new Date(),
       },
     });
-  } // <-- FIX: this closing brace for the `else` block was missing
+  }
 
   let payment;
   const paymentData = {
@@ -257,7 +313,14 @@ export async function provisionFromPayment(input, {
   }
 
   let session = null;
-  let credentials = { emailSent: false, temporaryPassword: null, manualRequired: false, manualPasscode: null };
+  let credentials = {
+    emailSent: false,
+    temporaryPassword: null,
+    manualRequired: false,
+    manualPasscode: null,
+    setupToken: null,
+    setupUrl: null,
+  };
 
   const hasActivePermanentPassword = Boolean(user.passwordHash && !user.mustChangePassword);
 
@@ -269,12 +332,11 @@ export async function provisionFromPayment(input, {
       sendEmail: !adminApproval,
     });
     try {
-      session = await issueSession(prisma, user);
+      session = await issueSession(prisma, credentials.user ?? user);
     } catch (err) {
       console.error('[provisioning] session issue failed:', err?.message ?? err);
     }
-  } else if (input.isRemainingPayment && !adminApproval) { 
-    
+  } else if (input.isRemainingPayment && !adminApproval) {
     await sendTopUpReceipt({
       to: user.email,
       name: user.name,
@@ -314,9 +376,12 @@ export async function provisionFromPayment(input, {
     duplicate: false,
     payment,
     project,
-    user,
+    user: credentials.user ?? user,
     token: session?.token ?? null,
     sessionExpiresAt: session?.expiresAt ?? null,
+    mustChangePassword: !hasActivePermanentPassword,
+    setupToken: credentials.setupToken,
+    setupUrl: credentials.setupUrl,
     emailSent: credentials.emailSent,
     manualRequired: Boolean(credentials.manualRequired),
     temporaryPassword: credentials.temporaryPassword,
