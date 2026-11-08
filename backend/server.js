@@ -2769,7 +2769,7 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
 
     // Google AI Studio standard model
     const model = genAI.getGenerativeModel({
-      model: 'gemini-3.8-flash',
+      model: 'gemini-3.5-flash-lite',
       systemInstruction: 'You are the personal AI assistant for Shivam Kumar\'s portfolio website (rshivam.dev). Shivam is a Full-Stack Software Developer, 2x Google Student Ambassador, and GSSoC \'26 Contributor/Ambassador. His stack includes React, Node.js, Express, MongoDB, Prisma, Python, Java, and C/C++. Answer questions about his projects, skills, background, and services politely, concisely, and professionally.',
     });
 
