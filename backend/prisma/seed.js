@@ -1,7 +1,21 @@
 import { PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import pg from 'pg';
 import bcrypt from 'bcryptjs';
 
-const prisma = new PrismaClient();
+// 1. Initialize the PostgreSQL connection pool
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  console.error('❌ DATABASE_URL is missing from environment variables.');
+  process.exit(1);
+}
+const pool = new pg.Pool({ connectionString });
+
+// 2. Initialize the Prisma adapter
+const adapter = new PrismaPg(pool);
+
+// 3. Pass the adapter to PrismaClient
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
   const email = process.env.CRM_SEED_EMAIL;
@@ -36,4 +50,5 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect();
+    await pool.end(); // Close the pool
   });
