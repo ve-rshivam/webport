@@ -40,6 +40,18 @@ model User {
   projects ClientProject[]
   payments Payment[]
 
+  crmRole       CrmRole?
+  crmActive     Boolean          @default(true)
+  crmSessions   CrmSession[]
+  crmPermissions TeamPermission[]
+  customerAccess CustomerUser[]
+  passwordTokens PasswordToken[]
+  ownedCustomers Customer[]      @relation("CustomerOwner")
+  ownedProjects  Project[]       @relation("ProjectOwner")
+  issuedInvoices Invoice[]       @relation("InvoiceIssuer")
+  verifiedPayments CrmPayment[]  @relation("PaymentVerifier")
+  activities    Activity[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -171,6 +183,13 @@ model AuditLog {
   ipAddress   String?
   userAgent   String?
 
+  entityType String?
+  entityId   String?
+  requestId  String?
+  outcome    String   @default("SUCCESS")
+  before     Json?
+  after      Json?
+
   metadata Json?
 
   createdAt DateTime @default(now())
@@ -188,5 +207,462 @@ model ProcessedWebhook {
 
   @@unique([gateway, eventId])
   @@index([createdAt])
+}
+
+// ============================================================================
+// CRM (Phase 2) — customers, projects, invoices, ledger, activity
+// ============================================================================
+
+enum CrmRole {
+  SUPERADMIN
+  ADMIN
+  TEAM
+  CLIENT
+}
+
+enum CrmPermission {
+  CUSTOMERS_READ
+  CUSTOMERS_WRITE
+  PIPELINE_WRITE
+  PROJECTS_READ
+  PROJECTS_WRITE
+  INVOICES_READ
+  INVOICES_WRITE
+  PAYMENTS_READ
+  PAYMENTS_WRITE
+  PAYMENTS_VERIFY
+  ACTIVITY_READ
+  ACTIVITY_WRITE
+  TEAM_MANAGE
+  AUDIT_READ
+  EXPORT_DATA
+  PORTAL_READ
+}
+
+enum CustomerStage {
+  NEW
+  CONTACTED
+  PROPOSAL_SENT
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+enum LeadSource {
+  REFERRAL
+  WEBSITE
+  ORGANIC
+  SOCIAL
+  OUTBOUND
+  RETURNING
+  OTHER
+}
+
+enum ProjectStatus {
+  DISCOVERY
+  IN_PROGRESS
+  REVIEW
+  BLOCKED
+  DELIVERED
+  ARCHIVED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  VOID
+}
+
+enum PaymentMethod {
+  RAZORPAY
+  PAYPAL
+  UPI_QR
+  BANK_TRANSFER
+  CASH
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  AWAITING_VERIFICATION
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum ProofStatus {
+  NONE
+  ACTIVE
+  RECYCLED
+  PURGED
+}
+
+enum ActivityType {
+  NOTE
+  CALL
+  EMAIL_OUT
+  EMAIL_IN
+  PORTAL_MESSAGE
+  STAGE_CHANGED
+  PAYMENT_RECEIVED
+  PAYMENT_FAILED
+  INVOICE_ISSUED
+  INVOICE_VOIDED
+  PROJECT_UPDATED
+  FILE_UPLOADED
+  SYSTEM
+}
+
+enum ActivityDirection {
+  INTERNAL
+  OUTBOUND
+  INBOUND
+}
+
+enum ActivityVisibility {
+  INTERNAL
+  CLIENT
+}
+
+enum ActorType {
+  USER
+  CLIENT
+  SYSTEM
+  GATEWAY
+}
+
+enum InjectionRisk {
+  NONE
+  LOW
+  HIGH
+}
+
+enum CustomerAccess {
+  OWNER
+  VIEWER
+}
+
+model CrmSession {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenHash    String   @unique
+  deviceHash   String
+  userAgent    String?
+  ipAddress    String?
+  ipSubnetHash String?
+  expiresAt    DateTime
+  lastSeenAt   DateTime @default(now())
+  revokedAt    DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+}
+
+model TeamPermission {
+  id         String         @id @default(cuid())
+  userId     String
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission CrmPermission
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, permission])
+  @@index([permission])
+}
+
+model CustomerUser {
+  id         String         @id @default(cuid())
+  customerId String
+  customer   Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  access     CustomerAccess @default(OWNER)
+
+  createdAt DateTime @default(now())
+
+  @@unique([customerId, userId])
+  @@index([userId])
+}
+
+model Customer {
+  id String @id @default(cuid())
+
+  contactName String
+  companyName String?
+  email       String  @unique
+  phone       String?
+  website     String?
+
+  stage  CustomerStage @default(NEW)
+  source LeadSource     @default(OTHER)
+  ownerId String?
+  owner   User?         @relation("CustomerOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  currency       String  @default("INR")
+  taxId          String?
+  billingAddress String?
+  tags           String[] @default([])
+  notes          String?
+  notesRisk      InjectionRisk @default(NONE)
+
+  firstContactAt DateTime @default(now())
+  convertedAt    DateTime?
+  archivedAt     DateTime?
+  deletedAt      DateTime?
+  version        Int      @default(1)
+
+  projects    Project[]
+  invoices    Invoice[]
+  payments    CrmPayment[]
+  activities  Activity[]
+  users       CustomerUser[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([stage, updatedAt])
+  @@index([ownerId, stage])
+  @@index([deletedAt])
+}
+
+model Project {
+  id     String @id @default(cuid())
+  code   String @unique
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  title       String
+  description String?
+  serviceType String?
+  status      ProjectStatus @default(DISCOVERY)
+
+  contractValue Decimal @default(0) @db.Decimal(14, 2)
+  currency      String  @default("INR")
+
+  startDate   DateTime?
+  dueDate     DateTime?
+  deliveredAt DateTime?
+  progress    Int       @default(0)
+  previewUrl  String?
+  repoUrl     String?
+
+  ownerId String?
+  owner   User?   @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  clientSummary String?
+  version       Int      @default(1)
+  deletedAt     DateTime?
+
+  invoices   Invoice[]
+  payments   CrmPayment[]
+  activities Activity[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId, status])
+  @@index([dueDate])
+  @@index([ownerId])
+  @@index([deletedAt])
+}
+
+model Invoice {
+  id     String  @id @default(cuid())
+  number String? @unique
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  projectId  String?
+  project    Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  status   InvoiceStatus @default(DRAFT)
+  currency String        @default("INR")
+
+  issueDate DateTime @default(now())
+  dueDate   DateTime
+
+  subtotal  Decimal @default(0) @db.Decimal(14, 2)
+  discount  Decimal @default(0) @db.Decimal(14, 2)
+  taxRate   Decimal @default(0) @db.Decimal(5, 2)
+  taxAmount Decimal @default(0) @db.Decimal(14, 2)
+  total     Decimal @default(0) @db.Decimal(14, 2)
+
+  notes           String?
+  terms           String?
+  customerSnapshot Json?
+
+  issuedById String?
+  issuedBy   User?   @relation("InvoiceIssuer", fields: [issuedById], references: [id], onDelete: SetNull)
+  issuedAt   DateTime?
+  voidedAt   DateTime?
+  voidReason String?
+
+  version Int @default(1)
+
+  lines    InvoiceLine[]
+  payments CrmPayment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId, status])
+  @@index([projectId])
+  @@index([dueDate, status])
+}
+
+model InvoiceLine {
+  id        String  @id @default(cuid())
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  description String
+  quantity    Decimal @default(1) @db.Decimal(10, 2)
+  unitPrice   Decimal @default(0) @db.Decimal(14, 2)
+  amount      Decimal @default(0) @db.Decimal(14, 2)
+  sortOrder   Int     @default(0)
+
+  @@index([invoiceId, sortOrder])
+}
+
+model CrmPayment {
+  id String @id @default(cuid())
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  invoiceId  String?
+  invoice    Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  projectId  String?
+  project    Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  method PaymentMethod
+  status PaymentStatus @default(PENDING)
+
+  amount       Decimal @db.Decimal(14, 2)
+  currency     String  @default("INR")
+  baseAmountInr Decimal @db.Decimal(14, 2)
+  fxRate       Decimal? @db.Decimal(12, 6)
+
+  gatewayOrderId   String?
+  gatewayPaymentId String?
+  reference        String?
+  idempotencyKey   String? @unique
+
+  proof          Bytes?
+  proofMime      String?
+  proofFilename  String?
+  proofSha256    String?
+  proofStatus    ProofStatus @default(NONE)
+  proofRecycledAt DateTime?
+  proofPurgeAfter DateTime?
+  proofPurgedAt   DateTime?
+
+  verifiedById String?
+  verifier     User?   @relation("PaymentVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  verifiedAt   DateTime?
+  failureCode  String?
+  notes        String?
+  receivedAt   DateTime?
+
+  refunds Refund[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([method, gatewayPaymentId])
+  @@index([customerId, status])
+  @@index([invoiceId])
+  @@index([status, proofPurgeAfter])
+  @@index([createdAt])
+}
+
+model Refund {
+  id        String     @id @default(cuid())
+  paymentId String
+  payment   CrmPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  amount           Decimal @db.Decimal(14, 2)
+  reason           String
+  gatewayRefundId  String? @unique
+  status           String  @default("PENDING")
+  currency         String  @default("INR")
+  baseAmountInr    Decimal? @db.Decimal(14, 2)
+  createdById      String?
+
+  createdAt DateTime @default(now())
+
+  @@index([paymentId, createdAt])
+}
+
+model Activity {
+  id String @id @default(cuid())
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  projectId  String?
+  project    Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  actorId   String?
+  actor     User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actorType ActorType @default(USER)
+
+  type        ActivityType
+  direction   ActivityDirection @default(INTERNAL)
+  visibility  ActivityVisibility @default(INTERNAL)
+  subject     String?
+  body        String?
+
+  fromStage CustomerStage?
+  toStage   CustomerStage?
+
+  sourceTrust   String       @default("UNTRUSTED")
+  injectionRisk InjectionRisk @default(NONE)
+  riskFlags     String[]     @default([])
+  metadata      Json?
+
+  occurredAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([customerId, occurredAt])
+  @@index([projectId, occurredAt])
+  @@index([type, createdAt])
+}
+
+model Counter {
+  key   String @id
+  value Int    @default(0)
+
+  updatedAt DateTime @updatedAt
+}
+
+model PasswordToken {
+  id       String @id @default(cuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  purpose  String // PASSWORD_RESET | ONBOARDING
+  tokenHash String @unique
+
+  expiresAt   DateTime
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(2)
+  lockedAt    DateTime?
+  consumedAt  DateTime?
+
+  requestIp        String?
+  requestUserAgent String?
+  requestedById    String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, purpose, createdAt])
+  @@index([expiresAt])
 }
 

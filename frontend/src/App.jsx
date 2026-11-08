@@ -27,6 +27,7 @@ import NotFound from './pages/NotFound';
 const About = lazy(() => import('./pages/About'));
 const Contact = lazy(() => import('./pages/Contact'));
 const Admin = lazy(() => import('./pages/Admin'));
+const Crm = lazy(() => import('./features/crm/CrmApp'));
 const Payment = lazy(() => import('./pages/Payment'));
 const Legal = lazy(() => import('./pages/Legal'));
 
@@ -50,6 +51,11 @@ const isMainDomainHost = () =>
 const AdminRoute = () => {
   if (import.meta.env.PROD && isMainDomainHost()) return <Navigate to="/" replace />;
   return <PageWrapper><Admin /></PageWrapper>;
+};
+
+const CrmRoute = () => {
+  if (import.meta.env.PROD && isMainDomainHost()) return <Navigate to="/" replace />;
+  return <Crm />;
 };
 
 const RobotsMeta = () => {
@@ -77,10 +83,11 @@ const RobotsMeta = () => {
 
 const AnimatedRoutes = () => {
   const location = useLocation();
+  const routeKey = location.pathname.startsWith('/admin/crm') ? '/admin/crm' : location.pathname;
 
   return (
     <AnimatePresence mode="wait">
-      <Routes location={location} key={location.pathname}>
+      <Routes location={location} key={routeKey}>
         <Route path="/" element={<PageWrapper><Home /></PageWrapper>} />
         <Route path="/about" element={<PageWrapper><About /></PageWrapper>} />
         <Route path="/skills" element={<PageWrapper><Skills /></PageWrapper>} />
@@ -95,6 +102,7 @@ const AnimatedRoutes = () => {
         <Route path="/legal" element={<PageWrapper><Legal /></PageWrapper>} />
         <Route path="/cookies" element={<PageWrapper><Cookies /></PageWrapper>} />
         <Route path="/reviews" element={<PageWrapper><Reviews /></PageWrapper>} />
+        <Route path="/admin/crm/*" element={<CrmRoute />} />
         <Route path="/admin" element={<AdminRoute />} />
         <Route path="/admin/*" element={<AdminRoute />} />
         <Route path="/experience" element={<PageWrapper><Experience /></PageWrapper>} />
@@ -123,6 +131,7 @@ function App() {
           >
             <Routes>
               <Route path="/" element={<Admin />} />
+              <Route path="/admin/crm/*" element={<Crm />} />
               <Route path="/admin/*" element={<Admin />} />
               <Route path="*" element={<Admin />} />
             </Routes>

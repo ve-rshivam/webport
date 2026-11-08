@@ -346,8 +346,8 @@ function ClientPortal() {
   const handleResetWithToken = async (e) => {
     e.preventDefault();
     if (!resetToken) return;
-    if (resetKey.length < 8) {
-      setResetError('Password must be at least 8 characters long.');
+    if (resetKey.length < 10 || !/[A-Za-z]/.test(resetKey) || !/\d/.test(resetKey) || !/[^A-Za-z0-9\s]/.test(resetKey)) {
+      setResetError('Password must be at least 10 characters with a letter, a number, and a special character.');
       return;
     }
     if (resetKey !== resetConfirmKey) {
@@ -388,6 +388,10 @@ function ClientPortal() {
 
   const handleSetPassword = async (e) => {
     e.preventDefault();
+    if (newPassword.length < 10 || !/[A-Za-z]/.test(newPassword) || !/\d/.test(newPassword) || !/[^A-Za-z0-9\s]/.test(newPassword)) {
+      setPasswordError('Password must be at least 10 characters with a letter, a number, and a special character.');
+      return;
+    }
     if (newPassword !== confirmPassword) {
       setPasswordError('The two passwords do not match.');
       return;
@@ -548,7 +552,7 @@ function ClientPortal() {
                 Create your portal password.
               </h2>
               <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">
-                Choose a strong password (at least 8 characters with letters and numbers). It will be encrypted and stored securely for your future sign-ins.
+                Choose a strong password (at least 10 characters with a letter, a number, and a special character). It will be encrypted and stored securely for your future sign-ins.
               </p>
 
               <form onSubmit={handleResetWithToken} className="mt-6 flex flex-col gap-4">
@@ -557,9 +561,9 @@ function ClientPortal() {
                   <input
                     type="password"
                     required
-                    minLength={8}
+                    minLength={10}
                     className={fieldClass}
-                    placeholder="8+ characters, letters and numbers"
+                    placeholder="10+ characters, letter, number, symbol"
                     value={resetKey}
                     onChange={(e) => setResetKey(e.target.value)}
                   />
@@ -570,7 +574,7 @@ function ClientPortal() {
                   <input
                     type="password"
                     required
-                    minLength={8}
+                    minLength={10}
                     className={fieldClass}
                     placeholder="Repeat your new password"
                     value={resetConfirmKey}
@@ -586,7 +590,7 @@ function ClientPortal() {
 
                 <button
                   type="submit"
-                  disabled={resetLoading || resetKey.length < 8}
+                  disabled={resetLoading || resetKey.length < 10}
                   className={`${buttonClass} mt-2 w-full`}
                 >
                   {resetLoading ? 'Saving password & opening portal…' : 'Save password & open portal'}
@@ -786,7 +790,7 @@ function ClientPortal() {
               Create your permanent password.
             </h2>
             <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--ink-soft)]">
-              Choose a password you will keep for future sign-ins — at least 8 characters with a letter and a number.
+              Choose a password you will keep for future sign-ins — at least 10 characters with a letter, a number, and a special character.
             </p>
             <form onSubmit={handleSetPassword} className="mt-6 flex max-w-md flex-col gap-4">
               <label className="block">
@@ -794,7 +798,7 @@ function ClientPortal() {
                 <input
                   type="password"
                   required
-                  minLength={8}
+                  minLength={10}
                   className={fieldClass}
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
@@ -805,7 +809,7 @@ function ClientPortal() {
                 <input
                   type="password"
                   required
-                  minLength={8}
+                  minLength={10}
                   className={fieldClass}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
@@ -1398,8 +1402,8 @@ function ClientPortal() {
                     <input
                       type="password"
                       name="newKey"
-                      placeholder="At least 8 characters"
-                      minLength={8}
+                      placeholder="At least 10 characters, letter, number, symbol"
+                      minLength={10}
                       required
                       className={fieldClass}
                     />
@@ -1410,7 +1414,7 @@ function ClientPortal() {
                       type="password"
                       name="confirmKey"
                       placeholder="Repeat the password"
-                      minLength={8}
+                      minLength={10}
                       required
                       className={fieldClass}
                     />

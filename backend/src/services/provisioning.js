@@ -4,23 +4,17 @@ import { ValidationError, validateEmail } from './validators.js';
 import {
   generateTemporaryPassword,
   hashSecret,
-  issueSession,
   TEMP_PASSWORD_TTL_MINUTES,
 } from './auth.service.js';
+import { issuePasswordToken, PASSWORD_TOKEN_PURPOSES } from './passwordTokens.service.js';
 import { getSupportEmail, sendEmail, portalUrl } from './email.service.js';
 import { generateInvoicePDF } from './invoiceService.js';
 import { createAlert } from './notifications.js';
 import { escapeHtml } from '../lib/security.js';
 import { recordAudit, AUDIT_ACTIONS } from '../lib/audit.js';
 
-const SETUP_LINK_TTL_MINUTES = 72 * 60; // 72 hours
-
 function addMinutes(minutes) {
   return new Date(Date.now() + minutes * 60 * 1000);
-}
-
-function sha256Hex(value) {
-  return crypto.createHash('sha256').update(String(value)).digest('hex');
 }
 
 function generateInvoiceNumber() {
@@ -53,9 +47,12 @@ export async function issueTemporaryCredentials(user, {
   const tempPasswordHash = await hashSecret(temporaryPassword);
 
   // Single-use 72-hour setup token for 1-click password creation
-  const setupToken = crypto.randomBytes(32).toString('hex');
-  const setupTokenHash = `sha256:${sha256Hex(setupToken)}`;
-  const setupTokenExpiry = addMinutes(SETUP_LINK_TTL_MINUTES);
+  const issued = await issuePasswordToken({
+    userId: user.id,
+    purpose: PASSWORD_TOKEN_PURPOSES.ONBOARDING,
+    ttlMinutes: 72 * 60,
+  });
+  const setupToken = issued.rawToken;
 
   const updated = await prisma.user.update({
     where: { id: user.id },
@@ -66,9 +63,6 @@ export async function issueTemporaryCredentials(user, {
       tempPasswordExpiry: addMinutes(TEMP_PASSWORD_TTL_MINUTES),
       tempPasswordAttempts: 0,
       mustChangePassword: true,
-      resetOtpHash: setupTokenHash,
-      resetOtpExpiry: setupTokenExpiry,
-      resetOtpAttempts: 0,
       sessionToken: null,
       sessionTokenExpiry: null,
       sessionFingerprint: null,
@@ -226,22 +220,13 @@ export async function provisionFromPayment(input, {
         : await prisma.user.findUnique({ where: { email } });
 
       let setupToken = null;
-      let session = null;
       if (existingUser && !input.isRemainingPayment) {
-        setupToken = crypto.randomBytes(32).toString('hex');
-        const tokenHash = `sha256:${sha256Hex(setupToken)}`;
-        await prisma.user.update({
-          where: { id: existingUser.id },
-          data: {
-            resetOtpHash: tokenHash,
-            resetOtpExpiry: addMinutes(SETUP_LINK_TTL_MINUTES),
-            resetOtpAttempts: 0,
-            mustChangePassword: true,
-          },
+        const issued = await issuePasswordToken({
+          userId: existingUser.id,
+          purpose: PASSWORD_TOKEN_PURPOSES.ONBOARDING,
+          ttlMinutes: 72 * 60,
         });
-        try {
-          session = await issueSession(prisma, existingUser);
-        } catch {}
+        setupToken = issued.rawToken;
       }
 
       const setupUrl = setupToken
@@ -253,7 +238,7 @@ export async function provisionFromPayment(input, {
         payment: existing,
         project: linkedProject,
         user: existingUser,
-        token: session?.token ?? null,
+        token: null,
         setupToken,
         setupUrl,
         mustChangePassword: Boolean(setupToken),
@@ -380,7 +365,6 @@ export async function provisionFromPayment(input, {
     throw err;
   }
 
-  let session = null;
   let credentials = {
     emailSent: false,
     temporaryPassword: null,
@@ -399,11 +383,6 @@ export async function provisionFromPayment(input, {
       syncClientProjectCredentials,
       sendEmail: !adminApproval,
     });
-    try {
-      session = await issueSession(prisma, credentials.user ?? user);
-    } catch (err) {
-      console.error('[provisioning] session issue failed:', err?.message ?? err);
-    }
   } else if (input.isRemainingPayment && !adminApproval) {
     await sendTopUpReceipt({
       to: user.email,
@@ -436,7 +415,7 @@ export async function provisionFromPayment(input, {
       isRemainingPayment: Boolean(input.isRemainingPayment),
       credentialsEmailed: credentials.emailSent,
       manualRequired: Boolean(credentials.manualRequired),
-      sessionIssued: Boolean(session),
+      sessionIssued: false,
     },
     source: gateway,
     emailSubject: `Payment received — ${email}`,
@@ -447,8 +426,8 @@ export async function provisionFromPayment(input, {
     payment,
     project,
     user: credentials.user ?? user,
-    token: session?.token ?? null,
-    sessionExpiresAt: session?.expiresAt ?? null,
+    token: null,
+    sessionExpiresAt: null,
     mustChangePassword: !input.isRemainingPayment,
     setupToken: credentials.setupToken,
     setupUrl: credentials.setupUrl,

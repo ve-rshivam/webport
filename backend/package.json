@@ -10,7 +10,9 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "crm:seed": "node scripts/seed-crm.mjs",
+    "crm:verify": "node scripts/crm-verify.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -31,6 +33,7 @@
     "pg": "^8.23.1",
     "razorpay": "^2.9.6",
     "resend": "^6.18.1",
+    "sharp": "^0.34.5",
     "socket.io": "^4.8.4"
   },
   "devDependencies": {

@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import express from 'express';
 import { prisma } from '../lib/prisma.js';
 import { sendError } from '../lib/http.js';
@@ -13,16 +12,13 @@ import {
 import { provisionFromPayment } from '../services/provisioning.js';
 import { createAlert } from '../services/notifications.js';
 import { emitPaymentReceived, emitProjectMutation } from '../lib/realtime.js';
-import { inspectImageDataUrl } from '../lib/security.js';
+import { sanitizeImageDataUrl } from '../lib/crm/imageSanitizer.js';
+import { sanitizeRequest } from '../lib/inputSanitizer.js';
 import { recordAudit, AUDIT_ACTIONS } from '../lib/audit.js';
 import { sendSupportAlertEmail, sendEmail, getSupportEmail, portalUrl } from '../services/email.service.js';
 
-const MAX_SCREENSHOT_CHARS = 4_000_000;
+const MAX_SCREENSHOT_CHARS = 4_200_000;
 const ONBOARDING_LINK_TTL_HOURS = 72;
-
-function sha256Hex(value) {
-  return crypto.createHash('sha256').update(String(value)).digest('hex');
-}
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -50,51 +46,7 @@ function sanitizeCleanField(value, fieldName, maxLen = 500) {
   return cleaned;
 }
 
-// Deep Binary Magic-Byte & Polyglot Payload Inspector for Image Uploads
-function verifyBinaryImageSafety(dataUrl) {
-  const commaIdx = dataUrl.indexOf(',');
-  if (commaIdx === -1) return false;
-  const header = dataUrl.slice(0, commaIdx).toLowerCase();
-  const base64Data = dataUrl.slice(commaIdx + 1).replace(/\s+/g, '');
-
-  const buffer = Buffer.from(base64Data, 'base64');
-  if (buffer.length < 12 || buffer.length > 3.2 * 1024 * 1024) return false;
-
-  // 1. Verify exact Binary Magic Numbers
-  const isPng =
-    header.includes('image/png') &&
-    buffer[0] === 0x89 &&
-    buffer[1] === 0x50 &&
-    buffer[2] === 0x4e &&
-    buffer[3] === 0x47 &&
-    buffer[4] === 0x0d &&
-    buffer[5] === 0x0a &&
-    buffer[6] === 0x1a &&
-    buffer[7] === 0x0a;
-
-  const isJpeg =
-    (header.includes('image/jpeg') || header.includes('image/jpg')) &&
-    buffer[0] === 0xff &&
-    buffer[1] === 0xd8 &&
-    buffer[2] === 0xff;
-
-  const isWebp =
-    header.includes('image/webp') &&
-    buffer.toString('ascii', 0, 4) === 'RIFF' &&
-    buffer.toString('ascii', 8, 12) === 'WEBP';
-
-  if (!isPng && !isJpeg && !isWebp) return false;
-
-  // 2. Scan binary for Polyglot embedded scripts (PHP, HTML, JS, SVG)
-  const asciiSample = buffer.toString('latin1');
-  if (/<\?php|<script[\s>]|<svg[\s>]|<!doctype\s+html|javascript:|onerror\s*=|onload\s*=/i.test(asciiSample)) {
-    return false;
-  }
-
-  return true;
-}
-
-function validateScreenshot(value) {
+async function validateScreenshot(value) {
   if (value === undefined || value === null || String(value).trim() === '') return undefined;
   const raw = String(value).trim();
 
@@ -102,10 +54,7 @@ function validateScreenshot(value) {
     if (raw.length > MAX_SCREENSHOT_CHARS) {
       throw new ValidationError('The screenshot is too large. Please use an image under 3 MB.', 413);
     }
-    if (!inspectImageDataUrl(raw).ok || !verifyBinaryImageSafety(raw)) {
-      throw new ValidationError('Security check failed: The file must be a genuine PNG, JPEG, or WebP image free of embedded scripts.', 415);
-    }
-    return raw;
+    return (await sanitizeImageDataUrl(raw)).dataUrl;
   }
 
   const validUrl = validateOptionalUrl(raw, 'screenshotUrl');
@@ -198,26 +147,10 @@ async function approveSubmission(id, admin, req, totalAmount, disconnectClientSo
     });
   }
 
-  // Generate 72-hour Magic Setup Token so client can click link -> create salted-hash password
-  let magicSetupUrl = portalUrl('/portal');
+  const magicSetupUrl = result.setupUrl || portalUrl('/portal');
   let emailSent = Boolean(result.emailSent);
 
-  if (result.user?.id) {
-    const rawToken = crypto.randomBytes(32).toString('hex');
-    const tokenHash = `sha256:${sha256Hex(rawToken)}`;
-    const expiresAt = new Date(Date.now() + ONBOARDING_LINK_TTL_HOURS * 60 * 60 * 1000);
-
-    await prisma.user.update({
-      where: { id: result.user.id },
-      data: {
-        resetOtpHash: tokenHash,
-        resetOtpExpiry: expiresAt,
-        resetOtpAttempts: 0,
-      },
-    });
-
-    magicSetupUrl = `${portalUrl('/portal')}?resetToken=${encodeURIComponent(rawToken)}`;
-
+  if (result.user?.id && result.setupToken) {
     try {
       const dispatch = await sendEmail({
         to: email,
@@ -408,7 +341,7 @@ export function createQrRouter({
   };
   const approveGuard = [verifyAdminToken, requireProjectAndPaymentPermissions];
 
-  router.post('/submit', uploadLimit, express.json({ limit: '5mb' }), async (req, res) => {
+  router.post('/submit', uploadLimit, express.json({ limit: '4.5mb' }), sanitizeRequest, async (req, res) => {
     try {
       const body = requireJsonBody(req);
       const rawClientName = validateRequiredString(
@@ -431,7 +364,7 @@ export function createQrRouter({
         120
       );
       const transactionRef = sanitizeCleanField(rawTransactionRef, 'transactionRef', 120);
-      const screenshotUrl = validateScreenshot(body.screenshotUrl);
+      const screenshotUrl = await validateScreenshot(body.screenshotUrl);
       const serviceName = body.serviceName ? sanitizeCleanField(String(body.serviceName), 'serviceName', 200) : null;
       const notes = body.notes ? sanitizeCleanField(String(body.notes), 'notes', 1000) : null;
       const currency = String(body.currency ?? 'INR').replace(/[^A-Za-z]/g, '').slice(0, 8).toUpperCase() || 'INR';

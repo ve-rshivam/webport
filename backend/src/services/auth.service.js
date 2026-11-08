@@ -5,7 +5,7 @@ import jwt from 'jsonwebtoken';
 import { ConfigError, ValidationError } from './validators.js';
 import { clientIp, deviceFingerprint, userAgent } from '../lib/security.js';
 
-const BCRYPT_ROUNDS = 10;
+const BCRYPT_ROUNDS = 12;
 export const TEMP_PASSWORD_TTL_MINUTES = 72 * 60;
 export const OTP_TTL_MINUTES = 10;
 export const SESSION_TTL_DAYS = 7;

@@ -1652,7 +1652,7 @@ const Admin = () => {
                     />
                     <input
                       type="password"
-                      placeholder="New password (min. 8 chars)"
+                      placeholder="New password (min. 10 chars, letter, number, symbol)"
                       required
                       onChange={(e) => setNewPassword(e.target.value)}
                       className={authField}

@@ -45,9 +45,14 @@ export function validateRequiredString(value, fieldName, minLength = 1, maxLengt
 }
 
 export function validatePassword(value, fieldName = 'password') {
-  const password = validateRequiredString(value, fieldName, 8, 128);
-  if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) {
-    throw new ValidationError(`${fieldName} must contain at least one letter and one number.`);
+  const password = validateRequiredString(value, fieldName, 10, 128);
+  if (!/[A-Za-z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9\s]/.test(password)) {
+    throw new ValidationError(
+      `${fieldName} must be at least 10 characters and contain a letter, a number, and a special character.`
+    );
+  }
+  if (/\s/.test(password)) {
+    throw new ValidationError(`${fieldName} cannot contain whitespace.`);
   }
   return password;
 }

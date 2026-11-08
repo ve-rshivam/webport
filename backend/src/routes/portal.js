@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import express from 'express';
 import { prisma } from '../lib/prisma.js';
 import { escapeHtml } from '../lib/security.js';
@@ -19,6 +18,17 @@ import {
 import { createAlert } from '../services/notifications.js';
 import { recordAudit, AUDIT_ACTIONS } from '../lib/audit.js';
 import { generateInvoicePDF } from '../services/invoiceService.js';
+import {
+  completePasswordToken,
+  claimPasswordToken,
+  failPasswordToken,
+  findValidPasswordToken,
+  issuePasswordToken,
+  revokePasswordTokensForUser,
+  tokenHashFor,
+  PASSWORD_TOKEN_PURPOSES,
+  RESET_TOKEN_TTL_MINUTES,
+} from '../services/passwordTokens.service.js';
 import { emitMessageNew } from '../lib/realtime.js';
 import {
   sendEmail,
@@ -27,8 +37,6 @@ import {
   adminNotifyRecipients,
   portalUrl,
 } from '../services/email.service.js';
-
-const RESET_TOKEN_TTL_MINUTES = 15;
 
 const UNSAFE_CHAT_PATTERNS = [
   /<script[\s>]|javascript:|vbscript:|onerror\s*=|onload\s*=/i,
@@ -44,10 +52,6 @@ function sanitizePortalText(value, fieldName, maxLen = 5000) {
     }
   }
   return cleaned;
-}
-
-export function sha256Hex(value) {
-  return crypto.createHash('sha256').update(String(value)).digest('hex');
 }
 
 function projectSummary(project) {
@@ -187,6 +191,11 @@ export function createPortalRouter({
           resetOtpAttempts: 0,
         },
       });
+      await revokePasswordTokensForUser(req.user.id);
+      await prisma.crmSession.updateMany({
+        where: { userId: req.user.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
       await syncClientProjectCredentials({ email: updatedUser.email, passwordHash, isTemporaryKey: false });
 
       return res.json({ success: true, message: 'Permanent password saved.' });
@@ -202,11 +211,20 @@ export function createPortalRouter({
       if (!rawToken || rawToken.length < 32 || rawToken.length > 256) {
         return res.status(400).json({ success: false, message: 'Invalid or missing setup token.' });
       }
-      const tokenHash = `sha256:${sha256Hex(rawToken)}`;
-      const user = await prisma.user.findFirst({
-        where: { resetOtpHash: tokenHash, resetOtpExpiry: { gt: new Date() } },
-        select: { id: true, email: true, name: true },
-      });
+      const token = await findValidPasswordToken(rawToken);
+      let user = token?.user ?? null;
+      let purpose = token?.purpose ?? null;
+      if (!user) {
+        user = await prisma.user.findFirst({
+          where: {
+            resetOtpHash: tokenHashFor(rawToken),
+            resetOtpExpiry: { gt: new Date() },
+            resetOtpAttempts: { lt: 2 },
+          },
+          select: { id: true, email: true, name: true },
+        });
+        if (user) purpose = PASSWORD_TOKEN_PURPOSES.ONBOARDING;
+      }
       if (!user) {
         return res.status(400).json({
           success: false,
@@ -217,6 +235,7 @@ export function createPortalRouter({
         success: true,
         email: user.email,
         name: user.name,
+        purpose: purpose || PASSWORD_TOKEN_PURPOSES.RESET,
       });
     } catch (err) {
       return sendError(res, err, 'Could not verify setup token.');
@@ -233,18 +252,17 @@ export function createPortalRouter({
         return res.json({ success: true, message: standardMessage });
       }
 
-      const rawToken = crypto.randomBytes(32).toString('hex');
-      const tokenHash = `sha256:${sha256Hex(rawToken)}`;
-      const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000);
-
+      const issued = await issuePasswordToken({
+        userId: user.id,
+        purpose: PASSWORD_TOKEN_PURPOSES.RESET,
+        ttlMinutes: RESET_TOKEN_TTL_MINUTES,
+        req,
+      });
       await prisma.user.update({
         where: { id: user.id },
-        data: {
-          resetOtpHash: tokenHash,
-          resetOtpExpiry: expiresAt,
-          resetOtpAttempts: 0,
-        },
+        data: { resetOtpHash: null, resetOtpExpiry: null, resetOtpAttempts: 0 },
       });
+      const rawToken = issued.rawToken;
 
       const resetUrl = `${portalUrl('/portal')}?resetToken=${encodeURIComponent(rawToken)}`;
       let emailSent = false;
@@ -292,37 +310,83 @@ export function createPortalRouter({
     try {
       const body = requireJsonBody(req);
       const token = validateRequiredString(body.token, 'token', 32, 256);
-      const password = validatePassword(body.password ?? body.newPassword, 'password');
-      const tokenHash = `sha256:${sha256Hex(token)}`;
-
-      const user = await prisma.user.findFirst({ where: { resetOtpHash: tokenHash } });
-      if (!user || !user.resetOtpExpiry || user.resetOtpExpiry.getTime() < Date.now()) {
-        throw new ValidationError('This setup/reset link is invalid or has expired. Request a new one.');
+      let claimed = null;
+      let legacyUser = null;
+      try {
+        claimed = await claimPasswordToken(token);
+      } catch (claimErr) {
+        legacyUser = await prisma.user.findFirst({
+          where: {
+            resetOtpHash: tokenHashFor(token),
+            resetOtpExpiry: { gt: new Date() },
+            resetOtpAttempts: { lt: 2 },
+          },
+        });
+        if (!legacyUser) throw claimErr;
+        const attempted = await prisma.user.updateMany({
+          where: {
+            id: legacyUser.id,
+            resetOtpHash: tokenHashFor(token),
+            resetOtpExpiry: { gt: new Date() },
+            resetOtpAttempts: { lt: 2 },
+          },
+          data: { resetOtpAttempts: { increment: 1 } },
+        });
+        if (!attempted.count) {
+          throw new ValidationError(
+            `This link is locked. Email ${getSupportEmail()} for a manual reset review.`,
+            423
+          );
+        }
       }
 
+      let password;
+      try {
+        password = validatePassword(body.password ?? body.newPassword, 'password');
+      } catch (err) {
+        if (claimed) {
+          const state = await failPasswordToken(claimed.id, claimed.attempts, claimed.maxAttempts);
+          if (state.locked) {
+            throw new ValidationError(
+              `This link is locked. Email ${getSupportEmail()} for a manual reset review.`,
+              423
+            );
+          }
+        }
+        throw err;
+      }
+
+      const user = claimed?.user ?? legacyUser;
       const passwordHash = await hashSecret(password);
-      const consumed = await prisma.user.updateMany({
-        where: { id: user.id, resetOtpHash: tokenHash, resetOtpExpiry: { gt: new Date() } },
-        data: {
-          passwordHash,
-          passwordUpdatedAt: new Date(),
-          mustChangePassword: false,
-          resetOtpHash: null,
-          resetOtpExpiry: null,
-          resetOtpAttempts: 0,
-          tempPasswordHash: null,
-          tempPasswordExpiry: null,
-          tempPasswordAttempts: 0,
-          sessionToken: null,
-          sessionTokenExpiry: null,
-          sessionFingerprint: null,
-          sessionUserAgent: null,
-          sessionIp: null,
-        },
+      await prisma.$transaction(async (tx) => {
+        await tx.user.update({
+          where: { id: user.id },
+          data: {
+            passwordHash,
+            passwordUpdatedAt: new Date(),
+            mustChangePassword: false,
+            resetOtpHash: null,
+            resetOtpExpiry: null,
+            resetOtpAttempts: 0,
+            tempPasswordHash: null,
+            tempPasswordExpiry: null,
+            tempPasswordAttempts: 0,
+            sessionToken: null,
+            sessionTokenExpiry: null,
+            sessionFingerprint: null,
+            sessionUserAgent: null,
+            sessionIp: null,
+          },
+        });
+        if (claimed) await completePasswordToken(claimed.id, tx);
+        else {
+          await tx.crmSession.updateMany({
+            where: { userId: user.id, revokedAt: null },
+            data: { revokedAt: new Date() },
+          });
+        }
+        await revokePasswordTokensForUser(user.id, tx);
       });
-      if (consumed.count === 0) {
-        throw new ValidationError('This link has already been used. Request a new one.', 409);
-      }
 
       await syncClientProjectCredentials({ email: user.email, passwordHash, isTemporaryKey: false });
       disconnectClientSockets(user.id);
@@ -376,12 +440,15 @@ export function createPortalRouter({
           id: user.id,
           resetOtpHash: user.resetOtpHash,
           resetOtpExpiry: { gt: new Date() },
-          resetOtpAttempts: { lt: 5 },
+          resetOtpAttempts: { lt: 2 },
         },
         data: { resetOtpAttempts: { increment: 1 } },
       });
       if (claimed.count === 0) {
-        throw new ValidationError('Too many incorrect codes. Request a new one.', 429);
+        throw new ValidationError(
+          `Too many incorrect codes. Email ${getSupportEmail()} for a manual reset review.`,
+          423
+        );
       }
       if (!(await verifySecret(otp, user.resetOtpHash))) {
         throw new ValidationError('This reset code is invalid or has expired.');
@@ -407,6 +474,10 @@ export function createPortalRouter({
           sessionIp: null,
           lastActiveAt: null,
         },
+      });
+      await prisma.crmSession.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date() },
       });
       await syncClientProjectCredentials({ email: user.email, passwordHash, isTemporaryKey: false });
       disconnectClientSockets(user.id);
