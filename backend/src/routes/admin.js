@@ -228,9 +228,13 @@ export function createInvoiceAdminRouter({
         ? `Payment Verified & Balance Cleared: ${updatedProject.projectTitle}`
         : `Project Approved & Invoice / SOW: ${updatedProject.projectTitle}`;
 
-      const setupLink = provisioningResult?.manualPasscode 
-        ? `${portalLink}?email=${encodeURIComponent(updatedProject.clientEmail)}&passcode=${encodeURIComponent(provisioningResult.manualPasscode)}&setup=true`
-        : portalLink;
+      const setupLink =
+  provisioningResult?.setupUrl ||
+  (provisioningResult?.setupToken
+    ? `${portalLink}?resetToken=${encodeURIComponent(provisioningResult.setupToken)}`
+    : provisioningResult?.manualPasscode
+    ? `${portalLink}?email=${encodeURIComponent(updatedProject.clientEmail)}&passcode=${encodeURIComponent(provisioningResult.manualPasscode)}&setup=true`
+    : portalLink);
 
       const deliveryResult = await sendEmail({
         to: updatedProject.clientEmail,

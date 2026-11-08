@@ -307,8 +307,11 @@ const Payment = () => {
     setVerificationPending(true);
     setPaymentStatusMessage('Payment verified! Redirecting you to set up your portal password…');
 
-    if (data?.token) {
+    // Sirf tab token save karein jab setupToken na ho (e.g. remaining balance payment)
+    if (data?.token && !data?.setupToken) {
       portalSession.save(data.token, data.userEmail || clientDetails.email);
+    } else if (data?.setupToken) {
+      portalSession.clear();
     }
 
     const targetUrl = data?.redirectUrl

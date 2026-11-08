@@ -139,6 +139,12 @@ function ClientPortal() {
 
   useEffect(() => {
     const restoreSession = async () => {
+      // Agar URL me resetToken hai, toh purana session clear karke seedha Create Password form dikhao
+      if (new URLSearchParams(window.location.search).get('resetToken')) {
+        portalSession.clear();
+        setIsLoggedIn(false);
+        return;
+      }
       if (!portalSession.getToken()) return;
       try {
         const data = await portalApi.me();

@@ -8,6 +8,7 @@ import {
   TEMP_PASSWORD_TTL_MINUTES,
 } from './auth.service.js';
 import { getSupportEmail, sendEmail, portalUrl } from './email.service.js';
+import { generateInvoicePDF } from './invoiceService.js';
 import { createAlert } from './notifications.js';
 import { escapeHtml } from '../lib/security.js';
 import { recordAudit, AUDIT_ACTIONS } from '../lib/audit.js';
@@ -20,6 +21,12 @@ function addMinutes(minutes) {
 
 function sha256Hex(value) {
   return crypto.createHash('sha256').update(String(value)).digest('hex');
+}
+
+function generateInvoiceNumber() {
+  const year = new Date().getFullYear();
+  const rand = crypto.randomBytes(3).toString('hex').toUpperCase();
+  return `INV-${year}-${rand}`;
 }
 
 function paymentStatusFor(totalCost, amountPaid) {
@@ -35,6 +42,7 @@ async function findPayment(gateway, transactionId) {
 }
 
 export async function issueTemporaryCredentials(user, {
+  project,
   projectTitle,
   loginUrl,
   disconnectClientSockets = () => {},
@@ -44,7 +52,7 @@ export async function issueTemporaryCredentials(user, {
   const temporaryPassword = generateTemporaryPassword();
   const tempPasswordHash = await hashSecret(temporaryPassword);
 
-  // Also issue a single-use 72-hour setup token so the user can set a password via 1-click link or redirect
+  // Single-use 72-hour setup token for 1-click password creation
   const setupToken = crypto.randomBytes(32).toString('hex');
   const setupTokenHash = `sha256:${sha256Hex(setupToken)}`;
   const setupTokenExpiry = addMinutes(SETUP_LINK_TTL_MINUTES);
@@ -94,21 +102,58 @@ export async function issueTemporaryCredentials(user, {
       };
     }
 
+    // Generate Invoice PDF to attach directly to the welcome/onboarding email
+    let attachments = undefined;
+    if (project && project.invoiceNumber) {
+      try {
+        const pdfBuffer = await generateInvoicePDF({
+          invoiceNumber: project.invoiceNumber,
+          invoiceDate: project.invoiceIssuedAt ?? new Date(),
+          status: project.paymentStatus ?? project.status,
+          clientName: project.clientName ?? updated.name ?? 'Client',
+          clientEmail: project.clientEmail ?? updated.email,
+          transactionRef: project.transactionRef ?? '',
+          projectTitle: project.projectTitle ?? projectTitle ?? 'Project',
+          projectType: project.projectType ?? project.serviceName ?? 'Web Development',
+          estimatedDays: project.estimatedDays ?? 14,
+          deliveryDate: project.deliveryDate ?? 'To be agreed',
+          features: Array.isArray(project.features) ? project.features : [],
+          totalCost: project.totalCost ?? 0,
+          amountPaid: project.amountPaid ?? 0,
+          currency: project.currency ?? 'INR',
+        });
+        if (pdfBuffer) {
+          attachments = [
+            {
+              filename: `Invoice-${project.invoiceNumber}.pdf`,
+              content: pdfBuffer,
+              contentType: 'application/pdf',
+            },
+          ];
+        }
+      } catch (pdfErr) {
+        console.error('[provisioning] Invoice PDF generation failed:', pdfErr?.message ?? pdfErr);
+      }
+    }
+
+    const titleLabel = project?.projectTitle ?? projectTitle;
     const dispatchResult = await sendEmail({
       to: updated.email,
-      subject: `Welcome to Your Client Portal${projectTitle ? ` — ${projectTitle}` : ''}`,
+      subject: `Invoice & Client Portal Setup${titleLabel ? ` — ${titleLabel}` : ''}`,
       html: `<div style="font-family:Arial,Helvetica,sans-serif;line-height:1.6;color:#17140f;max-width:560px;margin:auto;padding:24px;border:1px solid #e6dfd3;border-radius:8px;">
         <p style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#c93d1b">Shivam Web Studio · rshivam.dev</p>
-        <h2 style="font-family:Georgia,serif;font-weight:400;margin-top:4px;">Your project portal is ready</h2>
+        <h2 style="font-family:Georgia,serif;font-weight:400;margin-top:4px;">Payment Verified &amp; Invoice Attached</h2>
         <p>Hello <strong>${escapeHtml(updated.name || 'there')}</strong>,</p>
-        <p>Your payment has been verified${projectTitle ? ` for <strong>${escapeHtml(projectTitle)}</strong>` : ''}. Click the button below to create your permanent password and open your live project dashboard:</p>
+        <p>Thank you for your payment${titleLabel ? ` for <strong>${escapeHtml(titleLabel)}</strong>` : ''}. Your official invoice (${escapeHtml(project?.invoiceNumber || 'PDF')}) is attached to this email, and you can also download it anytime inside your Client Portal.</p>
+        <p>Click the button below to create your permanent password and open your live project dashboard:</p>
         <p style="margin:24px 0;">
           <a href="${escapeHtml(magicSetupUrl)}" style="display:inline-block;background:#17140f;color:#faf6ee;padding:12px 24px;text-decoration:none;border-radius:6px;font-weight:bold;">Create Password &amp; Open Portal</a>
         </p>
-        <p style="font-size:12px;color:#71695d;">This setup link is valid for 72 hours and can be used once.</p>
+        <p style="font-size:12px;color:#71695d;">This secure setup link is valid for 72 hours and can be used once.</p>
       </div>`,
-      text: `Hello ${updated.name || 'there'},\n\nYour payment has been verified${projectTitle ? ` for ${projectTitle}` : ''}.\n\nClick the link below to create your password and access your Client Portal:\n${magicSetupUrl}\n\nValid for 72 hours.`,
+      text: `Hello ${updated.name || 'there'},\n\nYour payment has been verified${titleLabel ? ` for ${titleLabel}` : ''}. Your invoice (${project?.invoiceNumber || ''}) is attached.\n\nClick the link below to create your password and access your Client Portal:\n${magicSetupUrl}\n\nValid for 72 hours.`,
       replyTo: getSupportEmail(),
+      ...(attachments ? { attachments } : {}),
     });
     emailSent = Boolean(dispatchResult?.success && !dispatchResult?.manualRequired);
     manualRequired = Boolean(dispatchResult?.manualRequired || !emailSent);
@@ -164,14 +209,25 @@ export async function provisionFromPayment(input, {
     }
 
     if (linkedProject) {
+      // Ensure invoiceNumber exists even if an earlier webhook created the project without one
+      if (!linkedProject.invoiceNumber) {
+        linkedProject = await prisma.clientProject.update({
+          where: { id: linkedProject.id },
+          data: {
+            invoiceNumber: generateInvoiceNumber(),
+            invoiceIssuedAt: new Date(),
+            transactionRef: linkedProject.transactionRef || transactionId,
+          },
+        });
+      }
+
       const existingUser = existing.userId
         ? await prisma.user.findUnique({ where: { id: existing.userId } })
         : await prisma.user.findUnique({ where: { email } });
 
       let setupToken = null;
       let session = null;
-      const needsPasswordSetup = Boolean(existingUser && (!existingUser.passwordHash || existingUser.mustChangePassword));
-      if (existingUser && needsPasswordSetup) {
+      if (existingUser && !input.isRemainingPayment) {
         setupToken = crypto.randomBytes(32).toString('hex');
         const tokenHash = `sha256:${sha256Hex(setupToken)}`;
         await prisma.user.update({
@@ -188,6 +244,10 @@ export async function provisionFromPayment(input, {
         } catch {}
       }
 
+      const setupUrl = setupToken
+        ? `${portalUrl('/portal')}?resetToken=${encodeURIComponent(setupToken)}`
+        : portalUrl('/portal');
+
       return {
         duplicate: true,
         payment: existing,
@@ -195,7 +255,8 @@ export async function provisionFromPayment(input, {
         user: existingUser,
         token: session?.token ?? null,
         setupToken,
-        mustChangePassword: needsPasswordSetup,
+        setupUrl,
+        mustChangePassword: Boolean(setupToken),
       };
     }
   }
@@ -255,6 +316,9 @@ export async function provisionFromPayment(input, {
         balanceDue,
         paymentStatus: paymentStatusFor(target.totalCost, amountPaid),
         isPaymentVerified: true,
+        invoiceNumber: target.invoiceNumber || generateInvoiceNumber(),
+        invoiceIssuedAt: new Date(),
+        transactionRef: transactionId,
         lastUpdated: new Date(),
       },
     });
@@ -268,6 +332,7 @@ export async function provisionFromPayment(input, {
         clientName: input.name ?? user.name ?? null,
         projectTitle: input.serviceName ?? 'Custom project',
         serviceName: input.serviceName ?? null,
+        projectType: input.serviceName ?? 'Full-Stack Development',
         currency: input.currency ?? 'INR',
         totalCost,
         amountPaid: projectAmount,
@@ -276,6 +341,9 @@ export async function provisionFromPayment(input, {
         status: 'Development Started',
         progress: 10,
         isPaymentVerified: true,
+        invoiceNumber: generateInvoiceNumber(),
+        invoiceIssuedAt: new Date(),
+        transactionRef: transactionId,
         lastUpdated: new Date(),
       },
     });
@@ -322,10 +390,10 @@ export async function provisionFromPayment(input, {
     setupUrl: null,
   };
 
-  const hasActivePermanentPassword = Boolean(user.passwordHash && !user.mustChangePassword);
-
-  if (!input.isRemainingPayment && !hasActivePermanentPassword) {
+  // Always issue setupToken for new project onboarding so password creation link always works
+  if (!input.isRemainingPayment) {
     credentials = await issueTemporaryCredentials(user, {
+      project,
       projectTitle: project.projectTitle,
       disconnectClientSockets,
       syncClientProjectCredentials,
@@ -343,6 +411,7 @@ export async function provisionFromPayment(input, {
       amount: projectAmount,
       currency: project.currency ?? 'INR',
       projectTitle: project.projectTitle,
+      project,
     });
     credentials.emailSent = true;
   } else {
@@ -363,6 +432,7 @@ export async function provisionFromPayment(input, {
       amount,
       currency: input.currency ?? 'INR',
       projectId: project.id,
+      invoiceNumber: project.invoiceNumber,
       isRemainingPayment: Boolean(input.isRemainingPayment),
       credentialsEmailed: credentials.emailSent,
       manualRequired: Boolean(credentials.manualRequired),
@@ -379,7 +449,7 @@ export async function provisionFromPayment(input, {
     user: credentials.user ?? user,
     token: session?.token ?? null,
     sessionExpiresAt: session?.expiresAt ?? null,
-    mustChangePassword: !hasActivePermanentPassword,
+    mustChangePassword: !input.isRemainingPayment,
     setupToken: credentials.setupToken,
     setupUrl: credentials.setupUrl,
     emailSent: credentials.emailSent,
@@ -433,21 +503,55 @@ export async function handleFailedPayment(input) {
   return { recorded: true };
 }
 
-export async function sendTopUpReceipt({ to, name, amount, currency, projectTitle }) {
+export async function sendTopUpReceipt({ to, name, amount, currency, projectTitle, project }) {
   try {
+    let attachments = undefined;
+    if (project && project.invoiceNumber) {
+      try {
+        const pdfBuffer = await generateInvoicePDF({
+          invoiceNumber: project.invoiceNumber,
+          invoiceDate: project.invoiceIssuedAt ?? new Date(),
+          status: project.paymentStatus ?? project.status,
+          clientName: project.clientName ?? name ?? 'Client',
+          clientEmail: project.clientEmail ?? to,
+          transactionRef: project.transactionRef ?? '',
+          projectTitle: project.projectTitle ?? projectTitle ?? 'Project',
+          projectType: project.projectType ?? project.serviceName ?? 'Web Development',
+          estimatedDays: project.estimatedDays ?? 14,
+          deliveryDate: project.deliveryDate ?? 'To be agreed',
+          features: Array.isArray(project.features) ? project.features : [],
+          totalCost: project.totalCost ?? 0,
+          amountPaid: project.amountPaid ?? 0,
+          currency: project.currency ?? currency ?? 'INR',
+        });
+        if (pdfBuffer) {
+          attachments = [
+            {
+              filename: `Invoice-${project.invoiceNumber}.pdf`,
+              content: pdfBuffer,
+              contentType: 'application/pdf',
+            },
+          ];
+        }
+      } catch (pdfErr) {
+        console.error('[provisioning] top-up invoice PDF failed:', pdfErr?.message ?? pdfErr);
+      }
+    }
+
     await sendEmail({
       to,
-      subject: 'Payment received — balance updated',
+      subject: `Payment Received & Updated Invoice — ${projectTitle || 'Your Project'}`,
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px; background: #f9f9f9; border-radius: 8px;">
-          <h2 style="color: #00bcd4;">Payment Successfully Applied</h2>
+          <h2 style="color: #17140f;">Payment Successfully Applied</h2>
           <p>Hi <strong>${escapeHtml(name || 'there')}</strong>,</p>
-          <p>We received your payment of <strong>${escapeHtml(currency)} ${escapeHtml(amount)}</strong>${projectTitle ? ` for <strong>${escapeHtml(projectTitle)}</strong>` : ''}. Your project balance has been updated.</p>
-          <p>You can check your updated progress and project status anytime in the <a href="${escapeHtml(portalUrl('/portal'))}">Client Portal</a>.</p>
+          <p>We received your payment of <strong>${escapeHtml(currency)} ${escapeHtml(amount)}</strong>${projectTitle ? ` for <strong>${escapeHtml(projectTitle)}</strong>` : ''}. Your project balance has been updated and your updated invoice is attached.</p>
+          <p>You can check your live progress anytime in the <a href="${escapeHtml(portalUrl('/portal'))}">Client Portal</a>.</p>
         </div>
       `,
       text: `Hi ${name || 'there'},\n\nWe received your payment of ${currency} ${amount}${projectTitle ? ` for ${projectTitle}` : ''}. Your project balance has been updated.\n\nOpen the client portal: ${portalUrl('/portal')}`,
       replyTo: getSupportEmail(),
+      ...(attachments ? { attachments } : {}),
     });
   } catch (err) {
     console.error('[provisioning] receipt email failed:', err?.message ?? err);
