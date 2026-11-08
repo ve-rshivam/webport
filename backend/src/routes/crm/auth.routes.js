@@ -8,6 +8,8 @@ import {
   parseLoginBody,
   parseRefreshBody,
   refreshSession,
+  forgotPassword, 
+  resetPassword
 } from '../../services/crm/auth.service.js';
 
 export function createAuthRouter({ limiter } = {}) {
@@ -81,6 +83,37 @@ export function createAuthRouter({ limiter } = {}) {
     asyncRoute(async (req, res) => {
       await logout(req);
       return res.json({ success: true });
+    })
+  );
+
+  router.post(
+    '/forgot-password',
+    limit,
+    asyncRoute(async (req, res) => {
+      const email = req.body?.email;
+      if (!email) throw badRequest('Email is required.');
+      await forgotPassword(email);
+      return res.json({
+        success: true,
+        message: 'If that email is on file, a reset code has been sent to your inbox.',
+      });
+    })
+  );
+
+  
+  router.post(
+    '/reset-password',
+    limit,
+    asyncRoute(async (req, res) => {
+      const { email, otp, newPassword } = req.body;
+      if (!email || !otp || !newPassword) {
+        throw badRequest('Email, OTP, and new password are required.');
+      }
+      await resetPassword(email, otp, newPassword);
+      return res.json({
+        success: true,
+        message: 'Password updated successfully. You can now log in.',
+      });
     })
   );
 

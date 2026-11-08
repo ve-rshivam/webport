@@ -6,6 +6,7 @@ import { badRequest, unauthorized, forbidden, CrmError } from '../../lib/crm/err
 import { effectivePermissions } from '../../lib/crm/permissions.js';
 import { recordCrmAudit, CRM_AUDIT } from '../../lib/crm/audit.js';
 import { clientIp, ipSubnet, userAgent } from '../../lib/security.js';
+import { sendEmail, getSupportEmail } from '../email.service.js';
 
 export const DEVICE_HEADER = 'x-crm-device';
 export const ACCESS_TTL_SECONDS = 15 * 60;
@@ -232,6 +233,97 @@ export async function authenticate(req, res, next) {
   } catch (err) {
     next(err);
   }
+}
+
+export async function forgotPassword(email) {
+  const normalizedEmail = String(email ?? '').toLowerCase().trim();
+  if (!normalizedEmail) throw badRequest('Email is required.');
+
+  const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+  
+  // Do not reveal if the user exists or not
+  if (!user || !user.crmActive) return;
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const salt = await bcrypt.genSalt(12);
+  const hashedOtp = await bcrypt.hash(otp, salt);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      resetOtpHash: hashedOtp,
+      resetOtpExpiry: new Date(Date.now() + 10 * 60 * 1000), // 10 mins
+      resetOtpAttempts: 0
+    }
+  });
+
+  try {
+    await sendEmail({
+      to: user.email,
+      subject: "CRM Password Reset Code",
+      html: `
+        <div style="font-family: Arial, sans-serif; padding: 20px;">
+          <h2>Hi ${user.name || 'Admin'},</h2>
+          <p>Your password reset code for the CRM is:</p>
+          <h1 style="color: #00e5ff; letter-spacing: 5px;">${otp}</h1>
+          <p style="color: red; font-size: 14px;">This code is valid for 10 minutes.</p>
+        </div>
+      `
+    });
+  } catch (error) {
+    console.error("Failed to send reset OTP email:", error);
+  }
+}
+
+export async function resetPassword(email, otp, newPassword) {
+  const normalizedEmail = String(email ?? '').toLowerCase().trim();
+  const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
+
+  if (!user || !user.resetOtpHash || !user.resetOtpExpiry) {
+    throw badRequest('No pending reset code. Request a new one.');
+  }
+
+  if (new Date(user.resetOtpExpiry).getTime() < Date.now()) {
+    throw badRequest('The reset code has expired. Request a new one.');
+  }
+
+  if (user.resetOtpAttempts >= 5) {
+    throw new CrmError(429, 'LOCKED_OTP', 'Too many incorrect attempts. Request a new reset code.');
+  }
+
+  const isMatch = await bcrypt.compare(String(otp), user.resetOtpHash);
+  if (!isMatch) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { resetOtpAttempts: { increment: 1 } }
+    });
+    throw badRequest('Incorrect reset code.');
+  }
+
+  if (String(newPassword).length < 8) {
+     throw badRequest('Password must be at least 8 characters long.');
+  }
+
+  const salt = await bcrypt.genSalt(12);
+  const hashedPassword = await bcrypt.hash(String(newPassword), salt);
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      passwordHash: hashedPassword,
+      resetOtpHash: null,
+      resetOtpExpiry: null,
+      resetOtpAttempts: 0,
+      sessionToken: null,
+      sessionTokenExpiry: null
+    }
+  });
+
+  // Revoke all existing CRM sessions for this user
+  await prisma.crmSession.updateMany({
+    where: { userId: user.id, revokedAt: null },
+    data: { revokedAt: new Date() }
+  });
 }
 
 export async function refreshSession({ refreshToken, deviceId, req }) {

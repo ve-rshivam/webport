@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { crmApi, crmSession } from './crmApi';
 import { ErrorNote, Field, inputClass, labelClass, primaryClass } from './crmUi';
 
@@ -63,17 +64,27 @@ export default function CrmLogin({ onLogin }) {
                   autoFocus
                 />
               </Field>
-              <Field label="Password">
-                <input
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  className={inputClass}
-                  placeholder="10+ characters, letter, number, symbol"
-                />
-              </Field>
+              <div>
+                <Field label="Password">
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    className={inputClass}
+                    placeholder="10+ characters, letter, number, symbol"
+                  />
+                </Field>
+                <div className="mt-2 flex justify-end">
+                  <Link
+                    to="forgot-password"
+                    className="font-mono-ui text-[10px] uppercase tracking-[0.14em] text-[var(--signal)] hover:underline"
+                  >
+                    Forgot password?
+                  </Link>
+                </div>
+              </div>
             </div>
 
             {error && (

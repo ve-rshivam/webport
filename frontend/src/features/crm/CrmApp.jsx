@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { crmApi, crmSession } from './crmApi';
 import CrmLogin from './CrmLogin';
+import CrmForgotPassword from './CrmForgotPassword';
 import { CrmShell, Loading, primaryClass } from './crmUi';
 import CrmDashboard from './CrmDashboard';
 import CrmCustomers from './CrmCustomers';
@@ -54,27 +55,26 @@ export default function CrmApp() {
     setActor(null);
   }
 
-  if (!crmSession.token()) {
-    return (
-      <CrmLogin
-        onLogin={(nextActor) => {
-          setActor(nextActor);
-          setChecking(false);
-        }}
-      />
-    );
+  if (checking && crmSession.token()) {
+    return <Loading label="Checking session" />;
   }
 
-  if (checking) return <Loading label="Checking session" />;
-
-  if (!actor) {
+  if (!crmSession.token() || !actor) {
     return (
-      <CrmLogin
-        onLogin={(nextActor) => {
-          setActor(nextActor);
-          setChecking(false);
-        }}
-      />
+      <Routes>
+        <Route path="forgot-password" element={<CrmForgotPassword />} />
+        <Route
+          path="*"
+          element={
+            <CrmLogin
+              onLogin={(nextActor) => {
+                setActor(nextActor);
+                setChecking(false);
+              }}
+            />
+          }
+        />
+      </Routes>
     );
   }
 

@@ -156,7 +156,12 @@ async function request(path, { method = 'GET', body, signal, retried = false } =
   }
 
   if (!response.ok) {
-    if (response.status === 401 && !retried && !['/auth/login', '/auth/refresh'].includes(path) && crmSession.refreshToken()) {
+    if (
+      response.status === 401 &&
+      !retried &&
+      !['/auth/login', '/auth/refresh', '/auth/forgot-password', '/auth/reset-password'].includes(path) &&
+      crmSession.refreshToken()
+    ) {
       await refreshAccessToken();
       return request(path, { method, body, signal, retried: true });
     }
@@ -216,6 +221,18 @@ export const crmApi = {
     return request('/auth/login', {
       method: 'POST',
       body: { email, password, deviceId: ensureDeviceId() },
+    });
+  },
+  forgotPassword(email) {
+    return request('/auth/forgot-password', {
+      method: 'POST',
+      body: { email },
+    });
+  },
+  resetPassword(email, otp, newPassword) {
+    return request('/auth/reset-password', {
+      method: 'POST',
+      body: { email, otp, newPassword },
     });
   },
   me() {
