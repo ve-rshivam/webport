@@ -19,7 +19,15 @@ import {
 
 export function createCrmRouter({ authLimiter } = {}) {
   const router = express.Router();
+  
+  // Safely parse ADMIN_ALLOWED_ORIGIN
+  const envAdminOrigins = (process.env.ADMIN_ALLOWED_ORIGIN || '')
+    .split(',')
+    .map(url => url.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+
   const mutationOrigins = [
+    ...envAdminOrigins, 
     process.env.APP_ORIGIN,
     process.env.FRONTEND_URL,
     process.env.CLIENT_URL,
