@@ -83,11 +83,10 @@ const RobotsMeta = () => {
 
 const AnimatedRoutes = () => {
   const location = useLocation();
-  const routeKey = location.pathname.startsWith('/admin/crm') ? '/admin/crm' : location.pathname;
 
   return (
     <AnimatePresence mode="wait">
-      <Routes location={location} key={routeKey}>
+      <Routes location={location} key={location.pathname}>
         <Route path="/" element={<PageWrapper><Home /></PageWrapper>} />
         <Route path="/about" element={<PageWrapper><About /></PageWrapper>} />
         <Route path="/skills" element={<PageWrapper><Skills /></PageWrapper>} />
@@ -102,7 +101,7 @@ const AnimatedRoutes = () => {
         <Route path="/legal" element={<PageWrapper><Legal /></PageWrapper>} />
         <Route path="/cookies" element={<PageWrapper><Cookies /></PageWrapper>} />
         <Route path="/reviews" element={<PageWrapper><Reviews /></PageWrapper>} />
-        <Route path="/crm/*" element={<CrmRoute />} />
+        <Route path="/admin/crm/*" element={<CrmRoute />} />
         <Route path="/admin" element={<AdminRoute />} />
         <Route path="/admin/*" element={<AdminRoute />} />
         <Route path="/experience" element={<PageWrapper><Experience /></PageWrapper>} />
