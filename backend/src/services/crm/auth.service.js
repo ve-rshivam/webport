@@ -201,7 +201,8 @@ export async function authenticate(req, res, next) {
     if (
       !safeEqualHex(recomputedDevice, session.deviceHash) ||
       !safeEqualHex(String(payload.fp ?? ''), session.deviceHash)
-    ) */{
+    ) */
+   {
       await recordCrmAudit({
         action: CRM_AUDIT.SESSION_DEVICE_MISMATCH,
         actorRole: session.user.crmRole,
