@@ -28,14 +28,22 @@ function hashToken(token) {
   return crypto.createHash('sha256').update(String(token)).digest('hex');
 }
 
+// Stored for audit/risk purposes only. It is NOT used to authorise requests,
+// because the client IP can legitimately change (mobile networks, proxies).
 function hashSubnet(req) {
   const subnet = ipSubnet(clientIp(req));
   return crypto.createHmac('sha256', sessionSecret()).update(`subnet|${subnet}`).digest('hex');
 }
 
-function hashDevice(deviceId, req) {
-  const material = `${deviceId}|${String(userAgent(req) ?? '').toLowerCase()}|${ipSubnet(clientIp(req))}`;
-  return crypto.createHmac('sha256', sessionSecret()).update(material).digest('hex');
+// Single source of truth for the device binding.
+// Based on the client-supplied device id only: Render's proxy layer makes
+// IP/subnet unreliable, and user-agent strings change on every browser update.
+function hashDevice(deviceId) {
+  const id = String(deviceId ?? '').trim();
+  if (!id || id.length > 256) {
+    throw badRequest('A valid device identifier is required.', 'INVALID_DEVICE');
+  }
+  return crypto.createHmac('sha256', sessionSecret()).update(`device|${id}`).digest('hex');
 }
 
 function safeEqualHex(a, b) {
@@ -43,6 +51,12 @@ function safeEqualHex(a, b) {
   const right = Buffer.from(String(b ?? ''), 'hex');
   if (left.length !== right.length || left.length === 0) return false;
   return crypto.timingSafeEqual(left, right);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
 }
 
 function newRefreshToken() {
@@ -92,7 +106,7 @@ async function createSession({ user, deviceId, req }) {
   const refreshExpiresAt = new Date(
     Date.now() + REFRESH_TTL_DAYS * 24 * 60 * 60 * 1000
   );
-  const deviceHash = hashDevice(deviceId, req);
+  const deviceHash = hashDevice(deviceId);
 
   const session = await prisma.crmSession.create({
     data: {
@@ -152,7 +166,7 @@ export async function login({ email, password, deviceId, req }) {
     entityType: 'CrmSession',
     entityId: session.sessionId,
     req,
-    metadata: { deviceBound: true, ipSubnetBound: true, jwt: true },
+    metadata: { deviceBound: true, jwt: true },
   });
 
   return { ...session, actor };
@@ -197,12 +211,8 @@ export async function authenticate(req, res, next) {
       throw new CrmError(401, 'DEVICE_REQUIRED', 'This session is bound to a device. Sign in again.');
     }
 
-    function hashDevice(deviceId, req) {
-  // Render load balancer proxy IPs badalta rehta hai, isliye sirf deviceId ko base rakhein
-  const material = String(deviceId || 'unknown-device');
-  return crypto.createHmac('sha256', sessionSecret()).update(material).digest('hex');
-}
-   {
+    // The device check: only a genuine mismatch revokes the session.
+    if (!safeEqualHex(hashDevice(deviceId), session.deviceHash)) {
       await recordCrmAudit({
         action: CRM_AUDIT.SESSION_DEVICE_MISMATCH,
         actorRole: session.user.crmRole,
@@ -215,7 +225,7 @@ export async function authenticate(req, res, next) {
         where: { id: session.id },
         data: { revokedAt: new Date() },
       });
-      throw new CrmError(401, 'DEVICE_MISMATCH', 'This session was used from a different device or network. Sign in again.');
+      throw new CrmError(401, 'DEVICE_MISMATCH', 'This session was used from a different device. Sign in again.');
     }
 
     if (Date.now() - session.lastSeenAt.getTime() > 5 * 60 * 1000) {
@@ -232,7 +242,6 @@ export async function authenticate(req, res, next) {
     };
     next();
   } catch (err) {
-    console.error("AUTH_DEBUG_ERROR:", err.message, err.code); 
     next(err);
   }
 }
@@ -242,11 +251,12 @@ export async function forgotPassword(email) {
   if (!normalizedEmail) throw badRequest('Email is required.');
 
   const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
-  
+
   // Do not reveal if the user exists or not
   if (!user || !user.crmActive) return;
 
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  // Cryptographically secure 6-digit code (Math.random is predictable)
+  const otp = crypto.randomInt(100000, 1000000).toString();
   const salt = await bcrypt.genSalt(12);
   const hashedOtp = await bcrypt.hash(otp, salt);
 
@@ -255,25 +265,25 @@ export async function forgotPassword(email) {
     data: {
       resetOtpHash: hashedOtp,
       resetOtpExpiry: new Date(Date.now() + 10 * 60 * 1000), // 10 mins
-      resetOtpAttempts: 0
-    }
+      resetOtpAttempts: 0,
+    },
   });
 
   try {
     await sendEmail({
       to: user.email,
-      subject: "CRM Password Reset Code",
+      subject: 'CRM Password Reset Code',
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px;">
-          <h2>Hi ${user.name || 'Admin'},</h2>
+          <h2>Hi ${escapeHtml(user.name || 'Admin')},</h2>
           <p>Your password reset code for the CRM is:</p>
           <h1 style="color: #00e5ff; letter-spacing: 5px;">${otp}</h1>
           <p style="color: red; font-size: 14px;">This code is valid for 10 minutes.</p>
         </div>
-      `
+      `,
     });
   } catch (error) {
-    console.error("Failed to send reset OTP email:", error);
+    console.error('Failed to send reset OTP email:', error);
   }
 }
 
@@ -281,7 +291,7 @@ export async function resetPassword(email, otp, newPassword) {
   const normalizedEmail = String(email ?? '').toLowerCase().trim();
   const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
 
-  if (!user || !user.resetOtpHash || !user.resetOtpExpiry) {
+  if (!user || !user.crmActive || !user.resetOtpHash || !user.resetOtpExpiry) {
     throw badRequest('No pending reset code. Request a new one.');
   }
 
@@ -297,36 +307,36 @@ export async function resetPassword(email, otp, newPassword) {
   if (!isMatch) {
     await prisma.user.update({
       where: { id: user.id },
-      data: { resetOtpAttempts: { increment: 1 } }
+      data: { resetOtpAttempts: { increment: 1 } },
     });
     throw badRequest('Incorrect reset code.');
   }
 
   if (String(newPassword).length < 8) {
-     throw badRequest('Password must be at least 8 characters long.');
+    throw badRequest('Password must be at least 8 characters long.');
   }
 
   const salt = await bcrypt.genSalt(12);
   const hashedPassword = await bcrypt.hash(String(newPassword), salt);
 
+  // A password reset must only change the password. It must never change the
+  // account's CRM role or re-activate a disabled account.
   await prisma.user.update({
     where: { id: user.id },
     data: {
       passwordHash: hashedPassword,
-      crmActive: true,         
-      crmRole: 'SUPERADMIN',
       resetOtpHash: null,
       resetOtpExpiry: null,
       resetOtpAttempts: 0,
       sessionToken: null,
-      sessionTokenExpiry: null
-    }
+      sessionTokenExpiry: null,
+    },
   });
 
   // Revoke all existing CRM sessions for this user
   await prisma.crmSession.updateMany({
     where: { userId: user.id, revokedAt: null },
-    data: { revokedAt: new Date() }
+    data: { revokedAt: new Date() },
   });
 }
 
@@ -350,7 +360,7 @@ export async function refreshSession({ refreshToken, deviceId, req }) {
   if (!current.user.crmActive || !current.user.crmRole) {
     throw forbidden('This account is not enabled for the CRM.');
   }
-  if (!safeEqualHex(hashDevice(deviceId, req), current.deviceHash)) {
+  if (!safeEqualHex(hashDevice(deviceId), current.deviceHash)) {
     await prisma.crmSession.update({
       where: { id: current.id },
       data: { revokedAt: new Date() },
