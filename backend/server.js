@@ -1205,7 +1205,7 @@ app.post('/api/admin/reset-password', otpEmailLimiter, async (req, res) => {
         otpExpiry: { $gt: new Date() },
       },
       { $inc: { otpAttempts: 1 } },
-      { new: true }
+      { returnDocument: 'after' }
     );
     if (!claimed) {
       return res.status(429).json({ success: false, message: "Too many incorrect codes. Request a new reset code." });
@@ -1854,7 +1854,7 @@ app.post('/api/content/update', verifyAdminToken, checkPerm(['cms']), async (req
       };
     }
 
-    await Content.findOneAndUpdate({}, update, { upsert: true, new: true });
+    await Content.findOneAndUpdate({}, update, { upsert: true, returnDocument: 'after' });
     clearAiCache();
     res.json({ success: true, message: "Website Updated!" });
   } catch (err) { res.status(500).json({ error: "Update failed" }); }
@@ -1877,7 +1877,7 @@ app.post('/api/skill', verifyAdminToken, checkPerm(['skills']), async (req, res)
 
 app.put('/api/skill/:id', verifyAdminToken, checkPerm(['skills']), async (req, res) => {
   try {
-    await Skill.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    await Skill.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after' });
     clearAiCache();
     res.json({ success: true, message: "Skill updated successfully!" });
   } catch (err) { 
@@ -1922,7 +1922,7 @@ app.put('/api/services/:id', verifyAdminToken, checkPerm(['services']), async (r
     if (update.price !== undefined) update.price = normalizeServicePrice(update.price);
     if (update.priceUsd !== undefined) update.priceUsd = normalizeServicePriceUsd(update.priceUsd);
     const service = await Service.findByIdAndUpdate(req.params.id, update, {
-      new: true,
+      returnDocument: 'after',
       runValidators: true,
     });
     if (!service) return res.status(404).json({ success: false, message: 'Service not found.' });
@@ -1959,7 +1959,7 @@ app.post('/api/education', verifyAdminToken, checkPerm(['skills']), async (req, 
 
 app.put('/api/education/:id', verifyAdminToken, checkPerm(['skills']), async (req, res) => {
   try {
-    await Education.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    await Education.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after' });
     clearAiCache();
     res.json({ success: true, message: "Education updated successfully!" });
   } catch (err) { 
@@ -1993,7 +1993,7 @@ app.post('/api/experience', verifyAdminToken, checkPerm(['skills']), async (req,
 
 app.put('/api/experience/:id', verifyAdminToken, checkPerm(['skills']), async (req, res) => {
   try {
-    await Experience.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    await Experience.findByIdAndUpdate(req.params.id, req.body, { returnDocument: 'after' });
     clearAiCache();
     res.json({ success: true, message: "Experience updated successfully!" });
   } catch (err) { 
@@ -2108,7 +2108,7 @@ app.post('/api/client-projects', verifyAdminToken, checkPerm(['projects']), asyn
 
     let project;
     if (targetId) {
-      project = await ClientProject.findByIdAndUpdate(targetId, payload, { new: true });
+      project = await ClientProject.findByIdAndUpdate(targetId, payload, { returnDocument: 'after' });
     } else {
       project = await new ClientProject(payload).save();
     }
@@ -2330,7 +2330,7 @@ app.post('/api/admin/approve-payment-message/:msgId', verifyAdminToken, checkPer
               $set: paymentUpdate,
               $addToSet: { appliedLegacyPaymentMessageIds: String(msg._id) },
             },
-            { new: true }
+            { returnDocument: 'after' }
           );
           if (!updatedProject) {
             const reread = await ClientProject.findById(project._id);
@@ -2876,7 +2876,7 @@ app.post('/api/client/reset-password-with-otp', otpEmailLimiter, async (req, res
         otpExpiry: { $gt: new Date() },
       },
       { $inc: { otpAttempts: 1 } },
-      { new: true }
+      { returnDocument: 'after' }
     );
     if (!claimed) {
       return res.status(429).json({ success: false, message: "Too many incorrect codes. Request a new reset code." });
