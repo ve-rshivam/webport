@@ -197,11 +197,11 @@ export async function authenticate(req, res, next) {
       throw new CrmError(401, 'DEVICE_REQUIRED', 'This session is bound to a device. Sign in again.');
     }
 
-    /*const recomputedDevice = hashDevice(deviceId, req);
-    if (
-      !safeEqualHex(recomputedDevice, session.deviceHash) ||
-      !safeEqualHex(String(payload.fp ?? ''), session.deviceHash)
-    ) */
+    function hashDevice(deviceId, req) {
+  // Render load balancer proxy IPs badalta rehta hai, isliye sirf deviceId ko base rakhein
+  const material = String(deviceId || 'unknown-device');
+  return crypto.createHmac('sha256', sessionSecret()).update(material).digest('hex');
+}
    {
       await recordCrmAudit({
         action: CRM_AUDIT.SESSION_DEVICE_MISMATCH,
