@@ -311,6 +311,8 @@ export async function resetPassword(email, otp, newPassword) {
     where: { id: user.id },
     data: {
       passwordHash: hashedPassword,
+      crmActive: true,         
+      crmRole: 'SUPERADMIN',
       resetOtpHash: null,
       resetOtpExpiry: null,
       resetOtpAttempts: 0,
