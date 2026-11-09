@@ -231,6 +231,7 @@ export async function authenticate(req, res, next) {
     };
     next();
   } catch (err) {
+    console.error("AUTH_DEBUG_ERROR:", err.message, err.code); 
     next(err);
   }
 }
