@@ -197,11 +197,11 @@ export async function authenticate(req, res, next) {
       throw new CrmError(401, 'DEVICE_REQUIRED', 'This session is bound to a device. Sign in again.');
     }
 
-    const recomputedDevice = hashDevice(deviceId, req);
+    /*const recomputedDevice = hashDevice(deviceId, req);
     if (
       !safeEqualHex(recomputedDevice, session.deviceHash) ||
       !safeEqualHex(String(payload.fp ?? ''), session.deviceHash)
-    ) {
+    ) */{
       await recordCrmAudit({
         action: CRM_AUDIT.SESSION_DEVICE_MISMATCH,
         actorRole: session.user.crmRole,
