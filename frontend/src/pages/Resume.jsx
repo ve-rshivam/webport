@@ -2,6 +2,13 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { PageShell, buttonClass } from '../components/Editorial';
 import { CONTACT_EMAIL, CONTACT_PHONE, emailHref } from '../lib/contact';
+import { API_BASE } from '../lib/api';
+
+const apiRequest = async (endpoint) => {
+  const res = await fetch(`${API_BASE}${endpoint}`);
+  if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+  return res.json();
+};
 
 const Resume = () => {
   const [pinnedProjects, setPinnedProjects] = useState([]);
@@ -14,13 +21,13 @@ const Resume = () => {
   const githubUser = "ve-rshivam";
 
   useEffect(() => {
-        apiRequest('/api/pinned-projects')
+    apiRequest('/api/pinned-projects')
       .then(data => {
         if (Array.isArray(data)) setPinnedProjects(data);
       })
       .catch(err => console.error('Pinned Projects Fetch Error:', err));
 
-        apiRequest('/api/resume-data')
+    apiRequest('/api/resume-data')
       .then(data => {
         setSkills(data.skills || []);
         setExperiences(data.experiences || []);
@@ -30,7 +37,9 @@ const Resume = () => {
       .catch(err => {
         console.error('Backend Fetch Error:', err);
         setLoading(false);
-      });    apiRequest('/api/content')
+      });
+
+    apiRequest('/api/content')
       .then(data => {
         if (data?.homeData?.heroTitle) {
           const title = data.homeData.heroTitle;
