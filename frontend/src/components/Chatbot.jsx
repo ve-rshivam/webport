@@ -5,7 +5,7 @@ import { apiUrl } from '../lib/api';
 const INITIAL_MESSAGES = [
   {
     sender: 'ai',
-    text: "Ask me about Shivam's work, stack or availability. For the résumé and contact details, use the links on the page.",
+    text: "Ask me about Shivam's work, stack or availability. For the resume and contact details, use the links on the page.",
   },
 ];
 
